@@ -37,7 +37,7 @@ export const LogIn: FC<LoginProps> = (props) => {
           <Button onClick={() => signIn("github")}>GitHub</Button>
         )}
         {props.entraIdEnabled && (
-          <Button onClick={() => signIn("azure-ad")}>Microsoft 365</Button>
+          <Button onClick={() => signIn("azure-ad")}>Microsoft IA Account</Button>
         )}
         {props.isDevMode && (
           <Button onClick={() => signIn("localdev")}>
