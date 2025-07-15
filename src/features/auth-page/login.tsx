@@ -29,7 +29,7 @@ export const LogIn: FC<LoginProps> = (props) => {
           <span className="text-primary">{AI_NAME}</span>
         </CardTitle>
         <CardDescription>
-          Login in with your GitHub or Microsoft 365 account
+          Start using IA-GPT with your Microsoft IA account now!
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
