@@ -23,8 +23,8 @@ export const ChatHome: FC<ChatPersonaProps> = (props) => {
             <>
               <Image
                 src={"/ia-full_icon.png"}
-                width={120}
-                height={60}
+                width={160}
+                height={80}
                 quality={100}
                 alt="IAGPT-fullicon"
               />{" "}
