@@ -33,9 +33,10 @@ export const ChatHome: FC<ChatPersonaProps> = (props) => {
           }
           description={AI_DESCRIPTION}
         ></Hero>
-        {/* Comment out the extensions div
+       
         <div className="container max-w-4xl flex gap-20 flex-col">
-          <div>
+          
+          {/*<div>
             <h2 className="text-2xl font-bold mb-3">Extensions</h2>
 
             {props.extensions && props.extensions.length > 0 ? (
@@ -54,8 +55,8 @@ export const ChatHome: FC<ChatPersonaProps> = (props) => {
               <p className="text-muted-foreground max-w-xl">No extentions created</p>
             }
 
-          </div>
-          */}
+          </div>*/}
+          
           <div>
             <h2 className="text-2xl font-bold mb-3">Personas</h2>
 
