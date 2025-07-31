@@ -54,7 +54,8 @@ export const ImageInput: FC = () => {
         onClick={handleButtonClick}
         aria-label="Add an image to the chat input"
       >
-        <ImageIcon size={16} />
+         {/* Hiding image icon */}
+        <ImageIcon size={0} />
       </Button>
     </div>
   );
