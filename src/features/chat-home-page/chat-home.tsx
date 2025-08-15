@@ -31,7 +31,7 @@ export const ChatHome: FC<ChatPersonaProps> = (props) => {
               {/* comment out the name {AI_NAME}*/}
             </>
           }
-          description={AI_DESCRIPTION}
+          description={<span className="whitespace-pre-line">{AI_DESCRIPTION}</span>}
         ></Hero>
        
         <div className="container max-w-4xl flex gap-20 flex-col">
