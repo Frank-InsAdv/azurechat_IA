@@ -83,7 +83,7 @@ export const ChatHome: FC<ChatPersonaProps> = (props) => {
       {/* Bottom-right link to policy */}
     <div className="fixed bottom-4 right-4">
       <a
-        href="https://ianet.sharepoint.com/:w:/t/ia/protocols-processes/ESQiYb-_03hKuKL7QQEeuowBAxqNz81bGPVJfNs86I9Tmw?e=hlGIUr&xsdata=MDV8MDJ8Zm1lbm5lbGxhQGlhYS5uZXQuYXV8NTVmMzAyZTRkNGEwNGFjYzUwNDMwOGRkZGJiMTY3NDN8NGVmMTNiYmQ3ZGJjNGFkZmFkNThhODI5MWFlNGRkZWR8MHwwfDYzODkwODI3NzIwMDQzNjk4NHxVbmtub3dufFRXRnBiR1pzYjNkOGV5SkZiWEIwZVUxaGNHa2lPblJ5ZFdVc0lsWWlPaUl3TGpBdU1EQXdNQ0lzSWxBaU9pSlhhVzR6TWlJc0lrRk9Jam9pVFdGcGJDSXNJbGRVSWpveWZRPT18MHx8fA%3d%3d&sdata=N0xrRzA0SUZBTXgxQ1cxUExXVWdldCtjQlhZREdZa2ppVm1Ha0lhZE85cz0%3d"
+        href="https://ialinks.net/g3z"
         target="_blank"
         rel="noopener noreferrer"
         className="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 transition"
