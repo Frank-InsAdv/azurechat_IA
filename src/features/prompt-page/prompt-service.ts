@@ -67,10 +67,42 @@ export const FindAllPrompts = async (): Promise<
   ServerActionResponse<Array<PromptModel>>
 > => {
   try {
-    const querySpec: SqlQuerySpec = {
-      query: "SELECT * FROM root r WHERE r.type=@type",
-      parameters: [{ name: "@type", value: PROMPT_ATTRIBUTE }],
-    };
+    const user = await getCurrentUser();
+    const userId = await userHashedId();
+
+    let querySpec: SqlQuerySpec;
+
+    if (user?.isAdmin) {
+      // Admin sees:
+      // - All published prompts
+      // - Their own prompts (published or not)
+      querySpec = {
+        query: `
+          SELECT * FROM root r 
+          WHERE r.type=@type 
+          AND (r.isPublished = true OR r.userId = @userId)
+        `,
+        parameters: [
+          { name: "@type", value: PROMPT_ATTRIBUTE },
+          { name: "@userId", value: userId },
+        ],
+      };
+    } else {
+      // Normal user sees:
+      // - All published prompts
+      // - Their own prompts (private or public)
+      querySpec = {
+        query: `
+          SELECT * FROM root r 
+          WHERE r.type=@type 
+          AND (r.isPublished = true OR r.userId = @userId)
+        `,
+        parameters: [
+          { name: "@type", value: PROMPT_ATTRIBUTE },
+          { name: "@userId", value: userId },
+        ],
+      };
+    }
 
     const { resources } = await ConfigContainer()
       .items.query<PromptModel>(querySpec)
