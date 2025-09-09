@@ -37,6 +37,10 @@ jobs:
 
       - name: 📂 Copy Public folder
         run: cp -R ./src/public ./site-deploy/public
+        
+      # ⬇️ NEW STEP: include runtime node_modules (so `next start` works on Azure)
+      - name: 📂 Copy node_modules needed for runtime
+        run: cp -R ./src/node_modules ./site-deploy/node_modules
 
       - name: 📦 Package Next application
         run: |
