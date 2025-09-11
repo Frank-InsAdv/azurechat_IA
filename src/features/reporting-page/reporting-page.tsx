@@ -21,7 +21,11 @@ import {
   TableRow as ShadTableRow,
 } from "../ui/table";
 import { ReportingHero } from "./reporting-hero";
-import { FindAllChatThreadsForAdmin } from "./reporting-services/reporting-service";
+import {
+  FindAllChatThreadsForAdmin,
+  FindWeeklySummariesForAdmin,
+  WeeklySummary,
+} from "./reporting-services/reporting-service";
 import ChatThreadRow from "./table-row";
 
 const SEARCH_PAGE_SIZE = 100;
@@ -43,19 +47,14 @@ export const ChatReportingPage: FC<ChatReportingProps> = async (props) => {
   );
 };
 
-// helper: get ISO week string like "2025-W36"
-function getWeekString(dateInput: string | Date) {
-  const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
-  const year = date.getUTCFullYear();
-
-  // Find ISO week number
-  const firstJan = new Date(Date.UTC(year, 0, 1));
-  const days = Math.floor(
-    (date.getTime() - firstJan.getTime()) / (24 * 60 * 60 * 1000)
-  );
-  const week = Math.ceil((days + firstJan.getUTCDay() + 1) / 7);
-
-  return `${year}-W${week.toString().padStart(2, "0")}`;
+// helper: format "DD-MM-YYYY to DD-MM-YYYY" from ISO weekStart / weekEnd (uses UTC parts)
+function formatWeekRange(weekStartISO: string, weekEndISO: string) {
+  if (!weekStartISO || !weekEndISO) return "";
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  const s = new Date(weekStartISO);
+  const e = new Date(weekEndISO);
+  const fmt = (d: Date) => `${pad(d.getUTCDate())}-${pad(d.getUTCMonth() + 1)}-${d.getUTCFullYear()}`;
+  return `${fmt(s)} to ${fmt(e)}`;
 }
 
 async function ReportingContent(props: ChatReportingProps) {
@@ -75,33 +74,23 @@ async function ReportingContent(props: ChatReportingProps) {
   const chatThreads = chatHistoryResponse.response;
   const hasMoreResults = chatThreads.length === SEARCH_PAGE_SIZE;
 
-  // --- NEW: build weekly summary ---
-  const weeklyStats: Record<
-    string,
-    { users: Set<string>; conversations: number }
-  > = {};
-
-  for (const thread of chatThreads) {
-    const week = getWeekString(thread.createdAt);
-    if (!weeklyStats[week]) {
-      weeklyStats[week] = { users: new Set(), conversations: 0 };
-    }
-    weeklyStats[week].conversations++;
-    weeklyStats[week].users.add(thread.useName);
+  // --- NEW: fetch weekly summaries from server (last 6 weeks) ---
+  const weeklyResponse = await FindWeeklySummariesForAdmin(6);
+  let weeklySummaries: WeeklySummary[] = [];
+  let weeklyError = null;
+  if (weeklyResponse.status === "OK") {
+    weeklySummaries = weeklyResponse.response;
+  } else {
+    weeklyError = weeklyResponse.errors;
+    console.error("FindWeeklySummariesForAdmin error:", weeklyError);
   }
-
-  const summaryRows = Object.entries(weeklyStats)
-    .map(([week, data]) => ({
-      week,
-      uniqueUsers: data.users.size,
-      conversations: data.conversations,
-    }))
-    // sort so newest week is first
-    .sort((a, b) => (a.week > b.week ? -1 : 1));
 
   return (
     <div className="container max-w-4xl py-3">
-      {/* --- NEW SUMMARY TABLE --- */}
+      {/* show weekly summary error if present but continue rendering the page */}
+      {weeklyError && <DisplayError errors={weeklyError} />}
+
+      {/* --- SUMMARY TABLE --- */}
       <ShadTable className="mb-6">
         <ShadTableHeader>
           <ShadTableRow>
@@ -111,9 +100,9 @@ async function ReportingContent(props: ChatReportingProps) {
           </ShadTableRow>
         </ShadTableHeader>
         <ShadTableBody>
-          {summaryRows.map((row) => (
-            <ShadTableRow key={row.week}>
-              <TableCell>{row.week}</TableCell>
+          {weeklySummaries.map((row) => (
+            <ShadTableRow key={row.weekStartISO}>
+              <TableCell>{formatWeekRange(row.weekStartISO, row.weekEndISO)}</TableCell>
               <TableCell>{row.uniqueUsers}</TableCell>
               <TableCell>{row.conversations}</TableCell>
             </ShadTableRow>
