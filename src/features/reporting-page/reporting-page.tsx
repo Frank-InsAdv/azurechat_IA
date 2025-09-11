@@ -12,6 +12,14 @@ import {
   TableHeader,
   TableRow,
 } from "../ui/table";
+import {
+  Table as ShadTable,
+  TableBody as ShadTableBody,
+  TableCell,
+  TableHead as ShadTableHead,
+  TableHeader as ShadTableHeader,
+  TableRow as ShadTableRow,
+} from "../ui/table";
 import { ReportingHero } from "./reporting-hero";
 import { FindAllChatThreadsForAdmin } from "./reporting-services/reporting-service";
 import ChatThreadRow from "./table-row";
@@ -35,6 +43,21 @@ export const ChatReportingPage: FC<ChatReportingProps> = async (props) => {
   );
 };
 
+// helper: get ISO week string like "2025-W36"
+function getWeekString(dateString: string) {
+  const date = new Date(dateString);
+  const year = date.getUTCFullYear();
+
+  // Find ISO week number
+  const firstJan = new Date(Date.UTC(year, 0, 1));
+  const days = Math.floor(
+    (date.getTime() - firstJan.getTime()) / (24 * 60 * 60 * 1000)
+  );
+  const week = Math.ceil((days + firstJan.getUTCDay() + 1) / 7);
+
+  return `${year}-W${week.toString().padStart(2, "0")}`;
+}
+
 async function ReportingContent(props: ChatReportingProps) {
   let pageNumber = props.page < 0 ? 0 : props.page;
   let nextPage = pageNumber + 1;
@@ -51,8 +74,54 @@ async function ReportingContent(props: ChatReportingProps) {
 
   const chatThreads = chatHistoryResponse.response;
   const hasMoreResults = chatThreads.length === SEARCH_PAGE_SIZE;
+
+  // --- NEW: build weekly summary ---
+  const weeklyStats: Record<
+    string,
+    { users: Set<string>; conversations: number }
+  > = {};
+
+  for (const thread of chatThreads) {
+    const week = getWeekString(thread.createdAt);
+    if (!weeklyStats[week]) {
+      weeklyStats[week] = { users: new Set(), conversations: 0 };
+    }
+    weeklyStats[week].conversations++;
+    weeklyStats[week].users.add(thread.useName);
+  }
+
+  const summaryRows = Object.entries(weeklyStats)
+    .map(([week, data]) => ({
+      week,
+      uniqueUsers: data.users.size,
+      conversations: data.conversations,
+    }))
+    // sort so newest week is first
+    .sort((a, b) => (a.week > b.week ? -1 : 1));
+
   return (
     <div className="container max-w-4xl py-3">
+      {/* --- NEW SUMMARY TABLE --- */}
+      <ShadTable className="mb-6">
+        <ShadTableHeader>
+          <ShadTableRow>
+            <ShadTableHead>Week</ShadTableHead>
+            <ShadTableHead>Unique Users</ShadTableHead>
+            <ShadTableHead>Conversations</ShadTableHead>
+          </ShadTableRow>
+        </ShadTableHeader>
+        <ShadTableBody>
+          {summaryRows.map((row) => (
+            <ShadTableRow key={row.week}>
+              <TableCell>{row.week}</TableCell>
+              <TableCell>{row.uniqueUsers}</TableCell>
+              <TableCell>{row.conversations}</TableCell>
+            </ShadTableRow>
+          ))}
+        </ShadTableBody>
+      </ShadTable>
+
+      {/* EXISTING TABLE */}
       <Table>
         <TableHeader>
           <TableRow>
@@ -68,6 +137,7 @@ async function ReportingContent(props: ChatReportingProps) {
             ))}
         </TableBody>
       </Table>
+
       <div className="flex gap-2 p-2 justify-end">
         {previousPage >= 0 && (
           <Button asChild size={"icon"} variant={"outline"}>
