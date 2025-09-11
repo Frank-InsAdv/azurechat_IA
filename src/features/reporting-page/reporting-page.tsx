@@ -44,8 +44,8 @@ export const ChatReportingPage: FC<ChatReportingProps> = async (props) => {
 };
 
 // helper: get ISO week string like "2025-W36"
-function getWeekString(dateString: string) {
-  const date = new Date(dateString);
+function getWeekString(dateInput: string | Date) {
+  const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
   const year = date.getUTCFullYear();
 
   // Find ISO week number
