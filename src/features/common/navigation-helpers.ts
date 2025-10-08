@@ -2,7 +2,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-type Page = "extensions" | "persona" | "prompt" | "chat" | "settings";
+// ✅ Export Page so other files can use it
+export type Page = "extensions" | "persona" | "prompt" | "chat" | "settings";
 
 export const RevalidateCache = (props: {
   page: Page;
