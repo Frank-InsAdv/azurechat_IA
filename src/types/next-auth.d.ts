@@ -6,14 +6,17 @@ declare module "next-auth" {
   interface Session {
     user: {
       isAdmin: boolean;
+      tenantId?: string; 
     } & DefaultSession["user"];
   }
 
   interface Token {
     isAdmin: boolean;
+    tenantId?: string; 
   }
 
   interface User {
     isAdmin: boolean;
+    tenantId?: string; 
   }
 }
