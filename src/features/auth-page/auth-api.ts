@@ -3,7 +3,7 @@ import AzureADProvider from "next-auth/providers/azure-ad";
 import CredentialsProvider from "next-auth/providers/credentials";
 import GitHubProvider from "next-auth/providers/github";
 import { Provider } from "next-auth/providers/index";
-import jwt from "jsonwebtoken"; // 👈 NEW: used to decode ID token
+import jwt from "jsonwebtoken"; // 👈 used to decode ID token
 import { hashValue } from "./helpers";
 
 // --- CHANGE 1: New optional ALLOWED_TENANT_IDS env var (comma-separated)
@@ -54,7 +54,7 @@ const configureIdentityProvider = () => {
       AzureADProvider({
         clientId: process.env.AZURE_AD_CLIENT_ID!,
         clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
-        tenantId: process.env.AZURE_AD_TENANT_ID!, // can be "organizations"
+        tenantId: process.env.AZURE_AD_TENANT_ID!,
         authorization: {
           params: {
             scope: "openid profile User.Read email",
@@ -165,7 +165,11 @@ export const fetchProfilePicture = async (
     const pictureBase64 = Buffer.from(pictureBuffer).toString("base64");
     image = `data:image/jpeg;base64,${pictureBase64}`;
   } else {
-    console.error("Failed to fetch profile picture:", profilePictureUrl, profilePicture.statusText);
+    console.error(
+      "Failed to fetch profile picture:",
+      profilePictureUrl,
+      profilePicture.statusText
+    );
   }
   return image;
 };
@@ -184,7 +188,8 @@ export const options: NextAuthOptions = {
     },
     async session({ session, token }) {
       session.user.isAdmin = token.isAdmin as boolean;
-      session.user.tenantId = token.tenantId;
+      // ✅ Cast tenantId to string | undefined to satisfy TypeScript
+      session.user.tenantId = token.tenantId as string | undefined;
       return session;
     },
   },
