@@ -3,10 +3,16 @@ import AzureADProvider from "next-auth/providers/azure-ad";
 import CredentialsProvider from "next-auth/providers/credentials";
 import GitHubProvider from "next-auth/providers/github";
 import { Provider } from "next-auth/providers/index";
+import jwt from "jsonwebtoken"; // 👈 NEW: used to decode ID token
 import { hashValue } from "./helpers";
-import { image } from "@markdoc/markdoc/dist/src/schema";
-import { access } from "fs";
 
+// --- CHANGE 1: New optional ALLOWED_TENANT_IDS env var (comma-separated)
+const allowedTenants =
+  process.env.ALLOWED_TENANT_IDS?.split(",").map((t) => t.trim().toLowerCase()) || [];
+
+// ------------------------------------------------------------
+// Helper: Configure Identity Providers
+// ------------------------------------------------------------
 const configureIdentityProvider = () => {
   const providers: Array<Provider> = [];
 
@@ -14,6 +20,9 @@ const configureIdentityProvider = () => {
     email.toLowerCase().trim()
   );
 
+  // --------------------------
+  // GitHub Provider (unchanged)
+  // --------------------------
   if (process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET) {
     providers.push(
       GitHubProvider({
@@ -24,7 +33,7 @@ const configureIdentityProvider = () => {
           const newProfile = {
             ...profile,
             isAdmin: adminEmails?.includes(profile.email.toLowerCase()),
-            image: image,
+            image,
           };
           console.log("GitHub profile:", newProfile);
           return newProfile;
@@ -33,6 +42,9 @@ const configureIdentityProvider = () => {
     );
   }
 
+  // --------------------------
+  // Azure AD Provider (FIXED)
+  // --------------------------
   if (
     process.env.AZURE_AD_CLIENT_ID &&
     process.env.AZURE_AD_CLIENT_SECRET &&
@@ -42,24 +54,54 @@ const configureIdentityProvider = () => {
       AzureADProvider({
         clientId: process.env.AZURE_AD_CLIENT_ID!,
         clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
-        tenantId: process.env.AZURE_AD_TENANT_ID!,
+        tenantId: process.env.AZURE_AD_TENANT_ID!, // can be "organizations"
         authorization: {
           params: {
-            scope: "openid profile User.Read", 
+            scope: "openid profile User.Read email",
           },
         },
         async profile(profile, tokens) {
           const email = profile.email || profile.preferred_username || "";
-          const image = await fetchProfilePicture(`https://graph.microsoft.com/v1.0/me/photos/48x48/$value`, tokens.access_token);
+
+          // ✅ Decode tenant ID safely
+          let tenantId: string | undefined;
+
+          if (tokens.id_token) {
+            try {
+              const decoded: any = jwt.decode(tokens.id_token);
+              tenantId = decoded?.tid?.toLowerCase();
+            } catch (err) {
+              console.warn("Failed to decode ID token:", err);
+            }
+          }
+
+          // Fallback to profile.tid if present
+          if (!tenantId && (profile as any).tid) {
+            tenantId = (profile as any).tid.toLowerCase();
+          }
+
+          // ✅ Restrict to allowed tenants
+          if (allowedTenants.length && tenantId && !allowedTenants.includes(tenantId)) {
+            console.warn("Login blocked: tenant not allowed:", tenantId);
+            throw new Error("Unauthorized tenant");
+          }
+
+          const image = await fetchProfilePicture(
+            `https://graph.microsoft.com/v1.0/me/photos/48x48/$value`,
+            tokens.access_token
+          );
+
           const newProfile = {
             ...profile,
             email,
             id: profile.sub,
+            tenantId,
             isAdmin:
-              adminEmails?.includes(profile.email?.toLowerCase()) ||
+              adminEmails?.includes(email.toLowerCase()) ||
               adminEmails?.includes(profile.preferred_username?.toLowerCase()),
-            image: image,
+            image,
           };
+
           console.log("Azure AD profile:", newProfile);
           return newProfile;
         },
@@ -67,10 +109,9 @@ const configureIdentityProvider = () => {
     );
   }
 
-  // If we're in local dev, add a basic credential provider option as well
-  // (Useful when a dev doesn't have access to create app registration in their tenant)
-  // This currently takes any username and makes a user with it, ignores password
-  // Refer to: https://next-auth.js.org/configuration/providers/credentials
+  // --------------------------
+  // Local Dev Provider (unchanged)
+  // --------------------------
   if (process.env.NODE_ENV === "development") {
     providers.push(
       CredentialsProvider({
@@ -79,24 +120,17 @@ const configureIdentityProvider = () => {
           username: { label: "Username", type: "text", placeholder: "dev" },
           password: { label: "Password", type: "password" },
         },
-        async authorize(credentials, req): Promise<any> {
-          // You can put logic here to validate the credentials and return a user.
-          // We're going to take any username and make a new user with it
-          // Create the id as the hash of the email as per userHashedId (helpers.ts)
+        async authorize(credentials): Promise<any> {
           const username = credentials?.username || "dev";
           const email = username + "@localhost";
           const user = {
             id: hashValue(email),
             name: username,
-            email: email,
+            email,
             isAdmin: adminEmails?.includes(email),
             image: "",
           };
-          console.log(
-            "=== DEV USER LOGGED IN:\n",
-            JSON.stringify(user, null, 2,
-            )
-          );
+          console.log("=== DEV USER LOGGED IN ===\n", JSON.stringify(user, null, 2));
           return user;
         },
       })
@@ -106,42 +140,51 @@ const configureIdentityProvider = () => {
   return providers;
 };
 
-export const fetchProfilePicture = async (profilePictureUrl: string, accessToken: any): Promise<any> => {
+// ------------------------------------------------------------
+// Helper: Fetch profile photo
+// ------------------------------------------------------------
+export const fetchProfilePicture = async (
+  profilePictureUrl: string,
+  accessToken: any
+): Promise<any> => {
   console.log("Fetching profile picture...");
-  var image = null
+  let image = null;
   const profilePicture = await fetch(
     profilePictureUrl,
-    accessToken && {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    }
+    accessToken
+      ? {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      : undefined
   );
   if (profilePicture.ok) {
     console.log("Profile picture fetched successfully.");
     const pictureBuffer = await profilePicture.arrayBuffer();
     const pictureBase64 = Buffer.from(pictureBuffer).toString("base64");
     image = `data:image/jpeg;base64,${pictureBase64}`;
-  }
-  else {
+  } else {
     console.error("Failed to fetch profile picture:", profilePictureUrl, profilePicture.statusText);
   }
   return image;
 };
 
-
+// ------------------------------------------------------------
+// NextAuth Config
+// ------------------------------------------------------------
 export const options: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
   providers: [...configureIdentityProvider()],
   callbacks: {
     async jwt({ token, user }) {
-      if (user?.isAdmin) {
-        token.isAdmin = user.isAdmin;
-      }
+      if (user?.isAdmin) token.isAdmin = user.isAdmin;
+      if (user?.tenantId) token.tenantId = user.tenantId;
       return token;
     },
-    async session({ session, token, user }) {
+    async session({ session, token }) {
       session.user.isAdmin = token.isAdmin as boolean;
+      session.user.tenantId = token.tenantId;
       return session;
     },
   },
