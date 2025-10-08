@@ -7,10 +7,11 @@ export const userSession = async (): Promise<UserModel | null> => {
   const session = await getServerSession(options);
   if (session && session.user) {
     return {
-      name: session.user.name!,
-      image: session.user.image!,
-      email: session.user.email!,
-      isAdmin: session.user.isAdmin!,
+      name: session.user.name || "",
+      image: session.user.image || "",
+      email: session.user.email || "",
+      isAdmin: session.user.isAdmin || false,
+      tenantId: session.user.tenantId || undefined,
     };
   }
 
@@ -40,10 +41,14 @@ export const hashValue = (value: string): string => {
   return hash.digest("hex");
 };
 
-export const redirectIfAuthenticated = async () => {
+/**
+ * Redirects the user if already authenticated
+ * @param targetUrl The URL to redirect to if user is logged in. Defaults to /chat
+ */
+export const redirectIfAuthenticated = async (targetUrl: string = "/chat") => {
   const user = await userSession();
   if (user) {
-    RedirectToPage("chat");
+    RedirectToPage(targetUrl);
   }
 };
 
@@ -52,4 +57,5 @@ export type UserModel = {
   image: string;
   email: string;
   isAdmin: boolean;
+  tenantId?: string;
 };
