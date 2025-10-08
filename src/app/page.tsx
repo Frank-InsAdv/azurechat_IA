@@ -2,11 +2,8 @@ import { redirectIfAuthenticated } from "@/features/auth-page/helpers";
 import { LogIn } from "@/features/auth-page/login";
 
 export default async function Home() {
-  try {
-    await redirectIfAuthenticated();
-  } catch {
-    // Ignore if not authenticated
-  }
+  // ✅ This will redirect to /chat if user is already logged in
+  await redirectIfAuthenticated("/chat");
 
   return (
     <main className="container max-w-lg flex items-center">
