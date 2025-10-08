@@ -22,11 +22,11 @@ export const LogIn: FC<LoginProps> = (props) => {
   const sessionData = useSession();
   const status = sessionData?.status ?? "loading";
 
-  // ✅ Optional automatic redirect for unauthenticated users
+  // ✅ Automatic redirect for unauthenticated Azure AD users
   useEffect(() => {
     if (status === "unauthenticated" && props.entraIdEnabled) {
       const timer = setTimeout(
-        () => signIn("azure-ad", { callbackUrl: "/" }),
+        () => signIn("azure-ad", { callbackUrl: "/chat" }),
         100
       );
       return () => clearTimeout(timer);
@@ -48,15 +48,17 @@ export const LogIn: FC<LoginProps> = (props) => {
       </CardHeader>
       <CardContent className="grid gap-4">
         {props.githubEnabled && (
-          <Button onClick={() => signIn("github")}>GitHub</Button>
+          <Button onClick={() => signIn("github", { callbackUrl: "/chat" })}>
+            GitHub
+          </Button>
         )}
         {props.entraIdEnabled && (
-          <Button onClick={() => signIn("azure-ad")}>
+          <Button onClick={() => signIn("azure-ad", { callbackUrl: "/chat" })}>
             Microsoft IA Account
           </Button>
         )}
         {props.isDevMode && (
-          <Button onClick={() => signIn("localdev")}>
+          <Button onClick={() => signIn("localdev", { callbackUrl: "/chat" })}>
             Basic Auth (DEV ONLY)
           </Button>
         )}
