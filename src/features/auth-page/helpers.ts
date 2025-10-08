@@ -1,17 +1,16 @@
 import { createHash } from "crypto";
 import { getServerSession } from "next-auth";
-import { RedirectToPage } from "../common/navigation-helpers";
+import { RedirectToPage, Page } from "../common/navigation-helpers";
 import { options } from "./auth-api";
 
 export const userSession = async (): Promise<UserModel | null> => {
   const session = await getServerSession(options);
   if (session && session.user) {
     return {
-      name: session.user.name || "",
-      image: session.user.image || "",
-      email: session.user.email || "",
-      isAdmin: session.user.isAdmin || false,
-      tenantId: session.user.tenantId || undefined,
+      name: session.user.name!,
+      image: session.user.image!,
+      email: session.user.email!,
+      isAdmin: session.user.isAdmin!,
     };
   }
 
@@ -41,14 +40,11 @@ export const hashValue = (value: string): string => {
   return hash.digest("hex");
 };
 
-/**
- * Redirects the user if already authenticated
- * @param targetUrl The URL to redirect to if user is logged in. Defaults to /chat
- */
-export const redirectIfAuthenticated = async (targetUrl: string = "/chat") => {
+// ✅ Redirect logged-in users to a Page
+export const redirectIfAuthenticated = async (targetPage: Page = "chat") => {
   const user = await userSession();
   if (user) {
-    RedirectToPage(targetUrl);
+    RedirectToPage(targetPage);
   }
 };
 
@@ -57,5 +53,4 @@ export type UserModel = {
   image: string;
   email: string;
   isAdmin: boolean;
-  tenantId?: string;
 };
