@@ -19,13 +19,16 @@ interface LoginProps {
 }
 
 export const LogIn: FC<LoginProps> = (props) => {
-  const { status } = useSession();
+  const sessionData = useSession();
+  const status = sessionData?.status ?? "loading";
 
-  // ✅ Optional automatic redirect
+  // ✅ Optional automatic redirect for unauthenticated users
   useEffect(() => {
     if (status === "unauthenticated" && props.entraIdEnabled) {
-      // Wrap in a small timeout to avoid Next.js hydration issues
-      const timer = setTimeout(() => signIn("azure-ad", { callbackUrl: "/" }), 100);
+      const timer = setTimeout(
+        () => signIn("azure-ad", { callbackUrl: "/" }),
+        100
+      );
       return () => clearTimeout(timer);
     }
   }, [status, props.entraIdEnabled]);
@@ -44,7 +47,6 @@ export const LogIn: FC<LoginProps> = (props) => {
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
-        {/* Keep GitHub & Dev buttons */}
         {props.githubEnabled && (
           <Button onClick={() => signIn("github")}>GitHub</Button>
         )}
