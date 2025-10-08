@@ -1,8 +1,9 @@
 "use client";
 import { AI_NAME } from "@/features/theme/theme-config";
 import { signIn, useSession } from "next-auth/react";
-import { useEffect } from "react";
+import { FC, useEffect } from "react";
 import { Avatar, AvatarImage } from "../ui/avatar";
+import { Button } from "../ui/button";
 import {
   Card,
   CardContent,
@@ -11,15 +12,20 @@ import {
   CardTitle,
 } from "../ui/card";
 
-export const LogIn = () => {
+interface LoginProps {
+  isDevMode: boolean;
+  githubEnabled: boolean;
+  entraIdEnabled: boolean;
+}
+
+export const LogIn: FC<LoginProps> = (props) => {
   const { status } = useSession();
 
   useEffect(() => {
-    // If the user is not authenticated, redirect immediately to Azure AD login
-    if (status === "unauthenticated") {
+    if (status === "unauthenticated" && props.entraIdEnabled) {
       signIn("azure-ad", { callbackUrl: "/" });
     }
-  }, [status]);
+  }, [status, props.entraIdEnabled]);
 
   return (
     <Card className="flex gap-2 flex-col min-w-[300px]">
@@ -31,17 +37,23 @@ export const LogIn = () => {
           <span className="text-primary">{AI_NAME}</span>
         </CardTitle>
         <CardDescription>
-          Redirecting you to sign in with your Microsoft IA account…
+          Start using IA-GPT with your Microsoft IA account now!
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
-        {/* Optionally, you can keep a manual button as fallback */}
-        <button
-          onClick={() => signIn("azure-ad", { callbackUrl: "/" })}
-          className="btn btn-primary"
-        >
-          Sign in manually
-        </button>
+        {props.githubEnabled && (
+          <Button onClick={() => signIn("github")}>GitHub</Button>
+        )}
+        {props.entraIdEnabled && (
+          <Button onClick={() => signIn("azure-ad")}>
+            Microsoft IA Account
+          </Button>
+        )}
+        {props.isDevMode && (
+          <Button onClick={() => signIn("localdev")}>
+            Basic Auth (DEV ONLY)
+          </Button>
+        )}
       </CardContent>
     </Card>
   );
