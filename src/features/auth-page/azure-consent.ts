@@ -2,27 +2,59 @@
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 
-const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET;
-if (!NEXTAUTH_SECRET) {
-  throw new Error("NEXTAUTH_SECRET must be set for signing admin-consent state");
+// Optional: only needed if we fetch from Key Vault dynamically
+import { DefaultAzureCredential } from "@azure/identity";
+import { SecretClient } from "@azure/keyvault-secrets";
+
+// Function to fetch NEXTAUTH_SECRET from Key Vault if needed
+async function fetchNextAuthSecret(): Promise<string> {
+  if (process.env.NEXTAUTH_SECRET && !process.env.NEXTAUTH_SECRET.startsWith("@Microsoft.KeyVault")) {
+    return process.env.NEXTAUTH_SECRET;
+  }
+
+  const keyVaultRef = process.env.NEXTAUTH_SECRET; // "@Microsoft.KeyVault(VaultName=...;SecretName=NEXTAUTH-SECRET)"
+  if (!keyVaultRef) {
+    throw new Error("NEXTAUTH_SECRET must be set for signing admin-consent state");
+  }
+
+  // Parse VaultName and SecretName from the reference string
+  const match = keyVaultRef.match(/VaultName=(.+?);SecretName=(.+)/);
+  if (!match) {
+    throw new Error("Invalid NEXTAUTH_SECRET Key Vault reference format");
+  }
+
+  const [, vaultName, secretName] = match;
+  const url = `https://${vaultName}.vault.azure.net`;
+  const client = new SecretClient(url, new DefaultAzureCredential());
+  const secret = await client.getSecret(secretName);
+  if (!secret.value) {
+    throw new Error(`Secret ${secretName} in Key Vault ${vaultName} is empty`);
+  }
+
+  return secret.value;
 }
-const secret: string = NEXTAUTH_SECRET;
+
+// Lazy load the secret at runtime
+let secret: string | null = null;
+async function getSecret(): Promise<string> {
+  if (!secret) {
+    secret = await fetchNextAuthSecret();
+  }
+  return secret;
+}
 
 /**
  * Generate admin consent URL for external tenant.
- *
- * @param params.tenantId  - tenant to request admin consent for
- * @param params.clientId  - your app registration client id
- * @param params.redirectUri - callback registered in app registration
- * @param params.expiresIn - optional JWT expiry (e.g. "10m", "24h")
  */
-export function generateAdminConsentUrl(params: {
+export async function generateAdminConsentUrl(params: {
   tenantId: string;
   clientId: string;
   redirectUri: string;
   expiresIn?: string | number;
 }) {
   const { tenantId, clientId, redirectUri, expiresIn = "24h" } = params;
+
+  const secretValue = await getSecret();
 
   const payload = {
     jti: crypto.randomBytes(16).toString("hex"),
@@ -31,9 +63,7 @@ export function generateAdminConsentUrl(params: {
     redirectUri,
   };
 
-  // Use a runtime cast to avoid TypeScript overload/type-definition mismatches
-  // (keeps runtime behavior intact while silencing the TS error).
-  const stateJwt = (jwt as any).sign(payload, secret, { expiresIn: `${expiresIn}` });
+  const stateJwt = (jwt as any).sign(payload, secretValue, { expiresIn: `${expiresIn}` });
 
   const url = `https://login.microsoftonline.com/${encodeURIComponent(
     tenantId
