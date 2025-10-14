@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from "next";
-import { generateAdminConsentUrl } from "@/features/auth-page/azure-consent";
+import { generateAdminConsentUrl as azureGenerateAdminConsentUrl } from "@/features/auth-page/azure-consent";
 
 const CLIENT_ID = process.env.AZURE_AD_CLIENT_ID;
 const REDIRECT_URI = process.env.ADMIN_CONSENT_CALLBACK_URL;
@@ -14,8 +14,21 @@ const REDIRECT_URI_STR: string = REDIRECT_URI;
 type Body = { tenantId?: string; expiresIn?: string };
 
 /**
+ * Named export so other code (like reporting-page.tsx) can use it directly
+ */
+export function generateAdminConsentUrl(params: { tenantId: string; expiresIn?: string }) {
+  return azureGenerateAdminConsentUrl({
+    tenantId: params.tenantId,
+    clientId: CLIENT_ID_STR,
+    redirectUri: REDIRECT_URI_STR,
+    expiresIn: params.expiresIn || DEFAULT_EXPIRES,
+  });
+}
+
+/**
  * POST { tenantId: string|'organizations', expiresIn?: string }
  * Returns: { url: string }
+ * Default export for API route
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
@@ -35,12 +48,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const url = generateAdminConsentUrl({
-      tenantId,
-      clientId: CLIENT_ID_STR,
-      redirectUri: REDIRECT_URI_STR,
-      expiresIn: expires,
-    });
+    const url = generateAdminConsentUrl({ tenantId, expiresIn: expires });
 
     // TODO: add auth check so only internal admins can call this
     // TODO: log audit record (who generated link) for traceability
