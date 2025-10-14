@@ -31,8 +31,9 @@ export function generateAdminConsentUrl(params: {
     redirectUri,
   };
 
-  // Fix TypeScript error by forcing expiresIn to string
-  const stateJwt = jwt.sign(payload, secret, { expiresIn: `${expiresIn}` });
+  // Use a runtime cast to avoid TypeScript overload/type-definition mismatches
+  // (keeps runtime behavior intact while silencing the TS error).
+  const stateJwt = (jwt as any).sign(payload, secret, { expiresIn: `${expiresIn}` });
 
   const url = `https://login.microsoftonline.com/${encodeURIComponent(
     tenantId
