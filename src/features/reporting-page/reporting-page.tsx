@@ -28,6 +28,11 @@ import {
 } from "./reporting-services/reporting-service";
 import ChatThreadRow from "./table-row";
 
+// server imports are safe here
+
+// Import the client component (Server Component can render it)
+import AdminConsentGenerator from "./admin-consent-generator";
+
 const SEARCH_PAGE_SIZE = 100;
 
 interface ChatReportingProps {
@@ -53,7 +58,8 @@ function formatWeekRange(weekStartISO: string, weekEndISO: string) {
   const pad = (n: number) => n.toString().padStart(2, "0");
   const s = new Date(weekStartISO);
   const e = new Date(weekEndISO);
-  const fmt = (d: Date) => `${pad(d.getUTCDate())}-${pad(d.getUTCMonth() + 1)}-${d.getUTCFullYear()}`;
+  const fmt = (d: Date) =>
+    `${pad(d.getUTCDate())}-${pad(d.getUTCMonth() + 1)}-${d.getUTCFullYear()}`;
   return `${fmt(s)} to ${fmt(e)}`;
 }
 
@@ -74,7 +80,7 @@ async function ReportingContent(props: ChatReportingProps) {
   const chatThreads = chatHistoryResponse.response;
   const hasMoreResults = chatThreads.length === SEARCH_PAGE_SIZE;
 
-  // --- NEW: fetch weekly summaries from server (last 6 weeks) ---
+  // --- fetch weekly summaries from server (last 6 weeks) ---
   const weeklyResponse = await FindWeeklySummariesForAdmin(6);
   let weeklySummaries: WeeklySummary[] = [];
   let weeklyError = null;
@@ -87,6 +93,9 @@ async function ReportingContent(props: ChatReportingProps) {
 
   return (
     <div className="container max-w-4xl py-3">
+      {/* --- ADMIN CONSENT GENERATOR (client component) --- */}
+      <AdminConsentGenerator />
+
       {/* show weekly summary error if present but continue rendering the page */}
       {weeklyError && <DisplayError errors={weeklyError} />}
 
@@ -110,7 +119,7 @@ async function ReportingContent(props: ChatReportingProps) {
         </ShadTableBody>
       </ShadTable>
 
-      {/* EXISTING TABLE */}
+      {/* EXISTING CHAT THREAD TABLE */}
       <Table>
         <TableHeader>
           <TableRow>
@@ -120,10 +129,9 @@ async function ReportingContent(props: ChatReportingProps) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {chatThreads &&
-            chatThreads.map((chatThread) => (
-              <ChatThreadRow key={chatThread.id} {...chatThread} />
-            ))}
+          {chatThreads.map((chatThread) => (
+            <ChatThreadRow key={chatThread.id} {...chatThread} />
+          ))}
         </TableBody>
       </Table>
 
@@ -146,3 +154,5 @@ async function ReportingContent(props: ChatReportingProps) {
     </div>
   );
 }
+
+export default ChatReportingPage;
