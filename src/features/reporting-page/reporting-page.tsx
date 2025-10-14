@@ -1,7 +1,8 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
-import { FC, Suspense } from "react";
+import { FC, Suspense, useState } from "react";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { DisplayError } from "../ui/error/display-error";
 import { PageLoader } from "../ui/page-loader";
 import { ScrollArea } from "../ui/scroll-area";
@@ -28,6 +29,9 @@ import {
 } from "./reporting-services/reporting-service";
 import ChatThreadRow from "./table-row";
 
+// NEW: Admin consent URL helper
+import { generateAdminConsentUrl } from "../auth-page/generate-admin-consent";
+
 const SEARCH_PAGE_SIZE = 100;
 
 interface ChatReportingProps {
@@ -53,8 +57,63 @@ function formatWeekRange(weekStartISO: string, weekEndISO: string) {
   const pad = (n: number) => n.toString().padStart(2, "0");
   const s = new Date(weekStartISO);
   const e = new Date(weekEndISO);
-  const fmt = (d: Date) => `${pad(d.getUTCDate())}-${pad(d.getUTCMonth() + 1)}-${d.getUTCFullYear()}`;
+  const fmt = (d: Date) =>
+    `${pad(d.getUTCDate())}-${pad(d.getUTCMonth() + 1)}-${d.getUTCFullYear()}`;
   return `${fmt(s)} to ${fmt(e)}`;
+}
+
+// NEW: Admin Consent URL generator component
+function AdminConsentGenerator() {
+  const [tenantId, setTenantId] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [consentUrl, setConsentUrl] = useState("");
+
+  const handleGenerate = () => {
+    try {
+      const url = generateAdminConsentUrl({
+        tenantId,
+        clientId,
+        redirectUri: process.env.ADMIN_CONSENT_CALLBACK_URL || "",
+        expiresIn: "24h",
+      });
+      setConsentUrl(url);
+    } catch (err) {
+      console.error("Failed to generate admin consent URL", err);
+      setConsentUrl("Error generating URL. Check console.");
+    }
+  };
+
+  return (
+    <div className="mb-6 p-4 border rounded-md bg-muted">
+      <h2 className="text-lg font-semibold mb-2">Generate Admin Consent URL</h2>
+      <div className="flex flex-col md:flex-row gap-2 mb-2">
+        <Input
+          placeholder="Tenant ID"
+          value={tenantId}
+          onChange={(e) => setTenantId(e.target.value)}
+        />
+        <Input
+          placeholder="Client ID"
+          value={clientId}
+          onChange={(e) => setClientId(e.target.value)}
+        />
+        <Button
+          className="px-4 py-2 bg-primary text-white rounded hover:bg-primary/80"
+          onClick={handleGenerate}
+        >
+          Generate URL
+        </Button>
+      </div>
+      {consentUrl && (
+        <Input
+          className="mt-2"
+          value={consentUrl}
+          readOnly
+          onFocus={(e) => e.target.select()}
+        />
+      )}
+    </div>
+  );
 }
 
 async function ReportingContent(props: ChatReportingProps) {
@@ -74,7 +133,7 @@ async function ReportingContent(props: ChatReportingProps) {
   const chatThreads = chatHistoryResponse.response;
   const hasMoreResults = chatThreads.length === SEARCH_PAGE_SIZE;
 
-  // --- NEW: fetch weekly summaries from server (last 6 weeks) ---
+  // --- fetch weekly summaries from server (last 6 weeks) ---
   const weeklyResponse = await FindWeeklySummariesForAdmin(6);
   let weeklySummaries: WeeklySummary[] = [];
   let weeklyError = null;
@@ -87,6 +146,9 @@ async function ReportingContent(props: ChatReportingProps) {
 
   return (
     <div className="container max-w-4xl py-3">
+      {/* --- ADMIN CONSENT GENERATOR --- */}
+      <AdminConsentGenerator />
+
       {/* show weekly summary error if present but continue rendering the page */}
       {weeklyError && <DisplayError errors={weeklyError} />}
 
@@ -110,7 +172,7 @@ async function ReportingContent(props: ChatReportingProps) {
         </ShadTableBody>
       </ShadTable>
 
-      {/* EXISTING TABLE */}
+      {/* EXISTING CHAT THREAD TABLE */}
       <Table>
         <TableHeader>
           <TableRow>
