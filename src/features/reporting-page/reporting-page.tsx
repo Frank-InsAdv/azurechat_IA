@@ -31,7 +31,7 @@ import {
 import ChatThreadRow from "./table-row";
 
 // NEW: Admin consent URL helper
-import { generateAdminConsentUrl } from "../auth-page/generate-admin-consent";
+import generateAdminConsentUrl from "../auth-page/generate-admin-consent";
 
 const SEARCH_PAGE_SIZE = 100;
 
@@ -66,16 +66,13 @@ function formatWeekRange(weekStartISO: string, weekEndISO: string) {
 // NEW: Admin Consent URL generator component
 function AdminConsentGenerator() {
   const [tenantId, setTenantId] = useState("");
-  const [clientId, setClientId] = useState("");
   const [consentUrl, setConsentUrl] = useState("");
 
   const handleGenerate = () => {
     try {
       const url = generateAdminConsentUrl({
         tenantId,
-        clientId,
-        redirectUri: process.env.ADMIN_CONSENT_CALLBACK_URL || "",
-        expiresIn: "24h",
+        expiresIn: "24h", // optional
       });
       setConsentUrl(url);
     } catch (err) {
@@ -92,11 +89,6 @@ function AdminConsentGenerator() {
           placeholder="Tenant ID"
           value={tenantId}
           onChange={(e) => setTenantId(e.target.value)}
-        />
-        <Input
-          placeholder="Client ID"
-          value={clientId}
-          onChange={(e) => setClientId(e.target.value)}
         />
         <Button
           className="px-4 py-2 bg-primary text-white rounded hover:bg-primary/80"
@@ -134,7 +126,6 @@ async function ReportingContent(props: ChatReportingProps) {
   const chatThreads = chatHistoryResponse.response;
   const hasMoreResults = chatThreads.length === SEARCH_PAGE_SIZE;
 
-  // --- fetch weekly summaries from server (last 6 weeks) ---
   const weeklyResponse = await FindWeeklySummariesForAdmin(6);
   let weeklySummaries: WeeklySummary[] = [];
   let weeklyError = null;
@@ -183,10 +174,9 @@ async function ReportingContent(props: ChatReportingProps) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {chatThreads &&
-            chatThreads.map((chatThread) => (
-              <ChatThreadRow key={chatThread.id} {...chatThread} />
-            ))}
+          {chatThreads.map((chatThread) => (
+            <ChatThreadRow key={chatThread.id} {...chatThread} />
+          ))}
         </TableBody>
       </Table>
 
