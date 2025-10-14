@@ -1,19 +1,14 @@
-// src/app/(authenticated)/api/admin/admin-consent-callback/route.ts
+// src/app/api/admin/admin-consent-callback/route.ts
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { DefaultAzureCredential } from "@azure/identity";
 import { SecretClient } from "@azure/keyvault-secrets";
 
-/**
- * Helper: get NEXTAUTH_SECRET string.
- * Mirrors the logic you added to azure-consent.ts so we can verify the state JWT.
- */
+/** Fetch NEXTAUTH_SECRET from env or Key Vault (same logic as azure-consent.ts) */
 async function fetchNextAuthSecret(): Promise<string> {
   const env = process.env.NEXTAUTH_SECRET;
   if (env && !env.startsWith("@Microsoft.KeyVault")) return env;
-
   if (!env) throw new Error("NEXTAUTH_SECRET is not set in environment");
 
   const match = env.match(/VaultName=(.+?);SecretName=(.+)/);
@@ -29,9 +24,24 @@ async function fetchNextAuthSecret(): Promise<string> {
 
 async function verifyStateJwt(stateJwt: string) {
   const secret = await fetchNextAuthSecret();
-  // jwt.verify will throw if invalid/expired
-  const payload = jwt.verify(stateJwt, secret) as any;
-  return payload;
+  return jwt.verify(stateJwt, secret) as any;
+}
+
+/** Use explicit absolute redirect targets from env (recommended) */
+function getRedirectTargets() {
+  const publicBase =
+    process.env.ADMIN_CONSENT_PUBLIC_HOST ||
+    process.env.NEXTAUTH_URL || // fallback
+    "";
+
+  const SUCCESS =
+    process.env.ADMIN_CONSENT_SUCCESS_REDIRECT ||
+    (publicBase ? `${publicBase.replace(/\/$/, "")}/chat` : "/chat");
+  const FAILURE =
+    process.env.ADMIN_CONSENT_FAILURE_REDIRECT ||
+    (publicBase ? `${publicBase.replace(/\/$/, "")}/reporting` : "/");
+
+  return { SUCCESS, FAILURE };
 }
 
 export async function GET(req: NextRequest) {
@@ -39,51 +49,48 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const params = url.searchParams;
     const state = params.get("state");
-    const tenant = params.get("tenant") || params.get("tid"); // Azure may include 'tenant' or other keys
-    const adminConsent = params.get("admin_consent") || params.get("admin_consented"); // check common names
+    const tenant = params.get("tenant") || params.get("tid");
+    const adminConsent = params.get("admin_consent") || params.get("admin_consented");
     const error = params.get("error");
     const errorDescription = params.get("error_description");
 
+    const { SUCCESS, FAILURE } = getRedirectTargets();
+
     if (!state) {
-      // Bad request from Azure
-      return NextResponse.redirect(new URL(`/reporting?consent=error&msg=${encodeURIComponent("missing_state")}`, req.nextUrl.origin));
+      console.warn("admin-consent callback: missing state");
+      // absolute redirect
+      return NextResponse.redirect(`${FAILURE}?consent=error&msg=missing_state`);
     }
 
-    // Verify the state JWT
+    // Verify state JWT
     let payload: any;
     try {
       payload = await verifyStateJwt(state);
     } catch (err: any) {
-      console.error("admin-consent callback: state verification failed:", err);
-      return NextResponse.redirect(new URL(`/reporting?consent=error&msg=${encodeURIComponent("invalid_state")}`, req.nextUrl.origin));
+      console.error("admin-consent callback: state verification failed:", err?.message || err);
+      return NextResponse.redirect(`${FAILURE}?consent=error&msg=invalid_state`);
     }
 
-    // Optional: check payload.purpose and redirectUri match expectation
     if (payload?.purpose !== "admin_consent") {
-      console.warn("admin-consent callback: state purpose mismatch", payload);
-      return NextResponse.redirect(new URL(`/reporting?consent=error&msg=${encodeURIComponent("bad_purpose")}`, req.nextUrl.origin));
+      console.warn("admin-consent callback: invalid state purpose", payload?.purpose);
+      return NextResponse.redirect(`${FAILURE}?consent=error&msg=bad_purpose`);
     }
 
-    // If Azure reported an error, redirect with message
     if (error) {
       const msg = errorDescription || error;
-      return NextResponse.redirect(new URL(`/reporting?consent=error&msg=${encodeURIComponent(msg)}`, req.nextUrl.origin));
+      return NextResponse.redirect(`${FAILURE}?consent=error&msg=${encodeURIComponent(msg)}`);
     }
 
-    // Successful admin consent: Azure returns admin_consent=True and tenant id
-    // Note: Azure commonly returns `tenant` query param containing the tenant id
     if (adminConsent && (adminConsent.toLowerCase() === "true" || adminConsent.toLowerCase() === "yes")) {
-      // TODO: persist audit/logging if desired: payload.jti, payload.iat, tenant, who requested...
-      // For now just redirect to chat or reporting with success
-      return NextResponse.redirect(new URL(`/chat?consent=success&tenant=${encodeURIComponent(tenant ?? "")}`, req.nextUrl.origin));
+      const dest = tenant ? `${SUCCESS}?consent=success&tenant=${encodeURIComponent(tenant)}` : `${SUCCESS}?consent=success`;
+      return NextResponse.redirect(dest);
     }
 
-    // Fallback: unknown response — redirect with info
-    return NextResponse.redirect(new URL(`/reporting?consent=error&msg=${encodeURIComponent("unknown_response")}`, req.nextUrl.origin));
+    // unknown response
+    return NextResponse.redirect(`${FAILURE}?consent=error&msg=unknown_response`);
   } catch (err: any) {
-    console.error("admin-consent callback unexpected error:", err);
-    // On server error, redirect to reporting with message
-    const origin = typeof req.nextUrl?.origin === "string" ? req.nextUrl.origin : "/";
-    return NextResponse.redirect(new URL(`/reporting?consent=error&msg=${encodeURIComponent("server_error")}`, origin));
+    console.error("admin-consent callback: unexpected error:", err);
+    const { FAILURE } = getRedirectTargets();
+    return NextResponse.redirect(`${FAILURE}?consent=error&msg=server_error`);
   }
 }
