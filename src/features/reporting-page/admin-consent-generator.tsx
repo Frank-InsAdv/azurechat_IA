@@ -21,7 +21,7 @@ const handleGenerate = async () => {
 
   setLoading(true);
   try {
-    const resp = await fetch("/api/auth/generate-admin-consent", {
+    const resp = await fetch("/api/admin/generate-admin-consent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tenantId: tid, expiresIn: "24h" }),
