@@ -5,7 +5,9 @@ import jwt from "jsonwebtoken";
 import { DefaultAzureCredential } from "@azure/identity";
 import { SecretClient } from "@azure/keyvault-secrets";
 
-/** Fetch NEXTAUTH_SECRET from env or Key Vault (same logic as azure-consent.ts) */
+// Tell Next this route is dynamic — avoid static prerender/SSG errors
+export const dynamic = "force-dynamic";
+
 async function fetchNextAuthSecret(): Promise<string> {
   const env = process.env.NEXTAUTH_SECRET;
   if (env && !env.startsWith("@Microsoft.KeyVault")) return env;
@@ -27,38 +29,35 @@ async function verifyStateJwt(stateJwt: string) {
   return jwt.verify(stateJwt, secret) as any;
 }
 
-/** Use explicit absolute redirect targets from env (recommended) */
-function getRedirectTargets() {
-  const publicBase =
-    process.env.ADMIN_CONSENT_PUBLIC_HOST ||
-    process.env.NEXTAUTH_URL || // fallback
-    "";
-
-  const SUCCESS =
-    process.env.ADMIN_CONSENT_SUCCESS_REDIRECT ||
-    (publicBase ? `${publicBase.replace(/\/$/, "")}/chat` : "/chat");
-  const FAILURE =
-    process.env.ADMIN_CONSENT_FAILURE_REDIRECT ||
-    (publicBase ? `${publicBase.replace(/\/$/, "")}/reporting` : "/");
-
-  return { SUCCESS, FAILURE };
+function absoluteBaseFrom(req: NextRequest) {
+  // prefer explicit admin host env, then NEXTAUTH_URL, otherwise derive from request origin
+  const explicit = process.env.ADMIN_CONSENT_PUBLIC_HOST || process.env.NEXTAUTH_URL;
+  if (explicit) return explicit.replace(/\/$/, "");
+  // req.nextUrl is available at runtime; use its origin if explicit not set
+  try {
+    return req.nextUrl.origin.replace(/\/$/, "");
+  } catch {
+    return "";
+  }
 }
 
 export async function GET(req: NextRequest) {
   try {
-    const url = new URL(req.url);
-    const params = url.searchParams;
+    const params = req.nextUrl.searchParams;
     const state = params.get("state");
     const tenant = params.get("tenant") || params.get("tid");
     const adminConsent = params.get("admin_consent") || params.get("admin_consented");
     const error = params.get("error");
     const errorDescription = params.get("error_description");
 
-    const { SUCCESS, FAILURE } = getRedirectTargets();
+    const publicBase = absoluteBaseFrom(req);
+    const SUCCESS =
+      process.env.ADMIN_CONSENT_SUCCESS_REDIRECT || (publicBase ? `${publicBase}/chat` : "/chat");
+    const FAILURE =
+      process.env.ADMIN_CONSENT_FAILURE_REDIRECT || (publicBase ? `${publicBase}/reporting` : "/");
 
     if (!state) {
       console.warn("admin-consent callback: missing state");
-      // absolute redirect
       return NextResponse.redirect(`${FAILURE}?consent=error&msg=missing_state`);
     }
 
@@ -82,15 +81,17 @@ export async function GET(req: NextRequest) {
     }
 
     if (adminConsent && (adminConsent.toLowerCase() === "true" || adminConsent.toLowerCase() === "yes")) {
-      const dest = tenant ? `${SUCCESS}?consent=success&tenant=${encodeURIComponent(tenant)}` : `${SUCCESS}?consent=success`;
+      const dest = tenant
+        ? `${SUCCESS}?consent=success&tenant=${encodeURIComponent(tenant)}`
+        : `${SUCCESS}?consent=success`;
       return NextResponse.redirect(dest);
     }
 
-    // unknown response
     return NextResponse.redirect(`${FAILURE}?consent=error&msg=unknown_response`);
   } catch (err: any) {
     console.error("admin-consent callback: unexpected error:", err);
-    const { FAILURE } = getRedirectTargets();
+    const publicBase = absoluteBaseFrom(req);
+    const FAILURE = process.env.ADMIN_CONSENT_FAILURE_REDIRECT || (publicBase ? `${publicBase}/reporting` : "/");
     return NextResponse.redirect(`${FAILURE}?consent=error&msg=server_error`);
   }
 }
