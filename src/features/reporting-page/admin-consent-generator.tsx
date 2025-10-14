@@ -27,21 +27,24 @@ const handleGenerate = async () => {
       body: JSON.stringify({ tenantId: tid, expiresIn: "24h" }),
     });
 
-    // Try to parse JSON; if invalid JSON, read text
+    // Read body once as text
+    const raw = await resp.text();
+
+    // Try parse JSON
     let data: any;
     try {
-      data = await resp.json();
+      data = raw ? JSON.parse(raw) : {};
     } catch (parseErr) {
-      const txt = await resp.text();
-      const msg = `Server returned non-JSON response (status ${resp.status}): ${txt}`;
-      throw new Error(msg);
+      // Not JSON — show raw text for debugging
+      throw new Error(`Server returned non-JSON response (status ${resp.status}): ${raw}`);
     }
 
     if (!resp.ok) {
-      // server returned JSON error object
-      throw new Error(data?.error || JSON.stringify(data));
+      // Server returned JSON with an error field
+      throw new Error(data?.error || `Server error (status ${resp.status}): ${JSON.stringify(data)}`);
     }
 
+    // Success
     setConsentUrl(data.url);
   } catch (err: any) {
     console.error("generate-admin-consent error:", err);
@@ -50,6 +53,7 @@ const handleGenerate = async () => {
     setLoading(false);
   }
 };
+
 
 
   const handleCopy = async () => {
