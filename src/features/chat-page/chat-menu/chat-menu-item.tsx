@@ -37,7 +37,7 @@ export const ChatMenuItem: FC<ChatMenuItemProps> = (props) => {
         href={props.href}
         className={cn(
           "flex-1 flex items-center gap-2 p-3 overflow-hidden",
-          path.startsWith(props.href) && props.href !== "/"
+          path?.startsWith(props.href) && props.href !== "/"
             ? "text-primary"
             : ""
         )}
