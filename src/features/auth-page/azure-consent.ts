@@ -6,7 +6,6 @@ const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET;
 if (!NEXTAUTH_SECRET) {
   throw new Error("NEXTAUTH_SECRET must be set for signing admin-consent state");
 }
-// TypeScript now knows this is a string
 const secret: string = NEXTAUTH_SECRET;
 
 /**
@@ -32,7 +31,8 @@ export function generateAdminConsentUrl(params: {
     redirectUri,
   };
 
-  const stateJwt = jwt.sign(payload, secret, { expiresIn });
+  // Fix TypeScript error by forcing expiresIn to string
+  const stateJwt = jwt.sign(payload, secret, { expiresIn: `${expiresIn}` });
 
   const url = `https://login.microsoftonline.com/${encodeURIComponent(
     tenantId
