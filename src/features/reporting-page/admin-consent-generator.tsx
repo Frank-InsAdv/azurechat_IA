@@ -10,34 +10,47 @@ export default function AdminConsentGenerator() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleGenerate = async () => {
-    setError(null);
-    setConsentUrl("");
-    if (!tenantId.trim()) {
-      setError("Please enter a tenant ID (GUID) or 'organizations'.");
-      return;
-    }
+const handleGenerate = async () => {
+  setError(null);
+  setConsentUrl("");
+  const tid = tenantId?.trim();
+  if (!tid) {
+    setError("Please enter a tenant ID (GUID) or 'organizations'.");
+    return;
+  }
 
-    setLoading(true);
+  setLoading(true);
+  try {
+    const resp = await fetch("/api/auth/generate-admin-consent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenantId: tid, expiresIn: "24h" }),
+    });
+
+    // Try to parse JSON; if invalid JSON, read text
+    let data: any;
     try {
-      const resp = await fetch("/api/auth/generate-admin-consent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantId: tenantId.trim(), expiresIn: "24h" }),
-      });
-
-      const data = await resp.json();
-      if (!resp.ok) {
-        throw new Error(data?.error || "Failed to generate URL");
-      }
-      setConsentUrl(data.url);
-    } catch (err: any) {
-      console.error("generate-admin-consent error:", err);
-      setError(err?.message || "Failed to generate URL");
-    } finally {
-      setLoading(false);
+      data = await resp.json();
+    } catch (parseErr) {
+      const txt = await resp.text();
+      const msg = `Server returned non-JSON response (status ${resp.status}): ${txt}`;
+      throw new Error(msg);
     }
-  };
+
+    if (!resp.ok) {
+      // server returned JSON error object
+      throw new Error(data?.error || JSON.stringify(data));
+    }
+
+    setConsentUrl(data.url);
+  } catch (err: any) {
+    console.error("generate-admin-consent error:", err);
+    setError(err?.message || "Failed to generate URL");
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   const handleCopy = async () => {
     if (!consentUrl) return;
