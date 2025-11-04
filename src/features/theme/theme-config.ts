@@ -1,6 +1,6 @@
 export const AI_NAME = "IA GPT";
 export const AI_DESCRIPTION = `Welcome to IA GPT! - THIS IS DEV, BREAK IT AS YOU LIKE!
-  An exclusive deployment of ChatGPT that is securely hosted within our internal network to ensure the highest level of data privacy and security, with all the power of ChatGPT.`;
+  An exclusive deployment of ChatGPT Model 5-mini that is securely hosted within our internal network to ensure the highest level of data privacy and security, with all the power of ChatGPT 5.`;
 export const CHAT_DEFAULT_PERSONA = AI_NAME + " default";
 
 export const CHAT_DEFAULT_SYSTEM_PROMPT = `You are a friendly ${AI_NAME} AI assistant. You must always return in markdown format.
