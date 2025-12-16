@@ -1,18 +1,13 @@
-// src/app/(authenticated)/api/agent-chat/route.ts
 import "server-only";
 
-import {
-  getOpenAIClient,
-  ensureConversation,
-  streamAgentResponse,
-} from "@/features/common/services/agent-client.server";
+import { getOpenAIClient, streamAgentResponse } from "@/features/common/services/agent-client.server";
 
 /**
  * POST /api/agent-chat
  * Body: { message: string; conversationId?: string }
  * Stream: text/event-stream
  * Events:
- *  - data: {"conversationId": "<id>"} (sent once at start)
+ *  - data: {"conversationId": "<id>"} (sent once when known)
  *  - data: {"delta": "<text chunk>"} (sent many times)
  *  - data: {"error": "<message>"} (only on error)
  */
@@ -27,26 +22,26 @@ export async function POST(req: Request) {
       );
     }
 
-    // Get the OpenAI client bound to your Foundry Project (Managed Identity)
     const openAIClient = await getOpenAIClient();
 
-    // Create or reuse the conversation and append the user message
-    const convId = await ensureConversation(openAIClient, conversationId, message);
-
-    // SSE stream to the client
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
-        // Send conversationId first so the UI can persist it
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ conversationId: convId })}\n\n`)
-        );
-
         try {
-          // Stream agent deltas
-          await streamAgentResponse(openAIClient, convId, (delta) => {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`));
-          });
+          await streamAgentResponse(
+            openAIClient,
+            { conversationId, userText: message },
+            // onDelta
+            (delta) => {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`));
+            },
+            // onConversationId
+            (convId) => {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ conversationId: convId })}\n\n`)
+              );
+            }
+          );
         } catch (err: any) {
           controller.enqueue(
             encoder.encode(
@@ -54,7 +49,6 @@ export async function POST(req: Request) {
             )
           );
         } finally {
-          // Close the SSE stream
           controller.close();
         }
       },
@@ -71,10 +65,8 @@ export async function POST(req: Request) {
       },
     });
   } catch (err: any) {
-    // Invalid JSON or unexpected server error
     return new Response(
       JSON.stringify({ error: err?.message ?? "Invalid request body" }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
+      { status: 400, headers: { "Content-Type": "application/json"      { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
-}
