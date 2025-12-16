@@ -1,4 +1,3 @@
-// src/features/common/services/agent-client.server.ts
 "use server";
 import "server-only";
 
@@ -10,18 +9,33 @@ const endpoint = process.env.AZURE_AIPROJECT_ENDPOINT;
 if (!endpoint) throw new Error("Missing AZURE_AIPROJECT_ENDPOINT");
 
 const agentName = process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini";
-// Optional: pin a specific version, e.g. "agent-gpt-5-mini:2"
+// Optional: pin a specific version, e.g., "agent-gpt-5-mini:2"
 const agentId = process.env.AZURE_AGENT_ID;
 
 // Single server-side client (Managed Identity)
 export const projectClient = new AIProjectClient(endpoint, new DefaultAzureCredential());
 
-// Get the OpenAI client bound to your Foundry Project
+/**
+ * Get the OpenAI client bound to your Foundry Project.
+ * - SDK 1.0.x: projectClient.getAzureOpenAIClient()
+ * - SDK 2.x preview: projectClient.getOpenAIClient()
+ */
 export async function getOpenAIClient() {
-  return await projectClient.getOpenAIClient();
+  const anyClient = projectClient as any;
+
+  if (typeof anyClient.getAzureOpenAIClient === "function") {
+    return await anyClient.getAzureOpenAIClient();
+  }
+  if (typeof anyClient.getOpenAIClient === "function") {
+    return await anyClient.getOpenAIClient();
+  }
+  throw new Error(
+    "Neither getAzureOpenAIClient() nor getOpenAIClient() exists on AIProjectClient. " +
+    "Check the @azure/ai-projects version."
+  );
 }
 
-// Create a new conversation (seed with a user message if provided)
+/** Create a new conversation, optionally seeded with a user message. */
 export async function createConversation(openAIClient: any, initialUserText?: string) {
   const conversation = await openAIClient.conversations.create({
     items: initialUserText
@@ -31,7 +45,7 @@ export async function createConversation(openAIClient: any, initialUserText?: st
   return conversation.id as string;
 }
 
-// Append a user message to an existing conversation
+/** Append a user message to an existing conversation. */
 export async function appendUserMessage(openAIClient: any, conversationId: string, userText: string) {
   if (!userText) return;
   const conv = await openAIClient.conversations.get(conversationId);
@@ -40,7 +54,7 @@ export async function appendUserMessage(openAIClient: any, conversationId: strin
   await openAIClient.conversations.update(conversationId, { items });
 }
 
-// Create or reuse a conversation and add the user message appropriately
+/** Create or reuse a conversation and add the user message appropriately. */
 export async function ensureConversation(
   openAIClient: any,
   conversationId?: string,
@@ -79,7 +93,7 @@ export async function streamAgentResponse(
       onDelta(event.delta);
     } else if (event.type === "response.error") {
       throw new Error(event.error?.message ?? "Agent response error");
-    } // ignore other event types or extend later for tool calls
+    }
+    // (Optional) extend handling for tool-call events later if needed
   }
 }
-``
