@@ -152,3 +152,4 @@ export async function streamAgentResponse(
     }
     // Ignore other event types; extend later for tools if needed.
    }
+}
