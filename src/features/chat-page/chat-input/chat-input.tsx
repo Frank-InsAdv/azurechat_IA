@@ -34,29 +34,25 @@ import {
   useTextToSpeech,
 } from "./speech/use-text-to-speech";
 
-/**
- * Reads the "Use Agent" toggle state from localStorage.
- * AgentToggle.tsx should persist `localStorage.setItem("ia.useAgent", "true" | "false")`.
- */
-function useAgentToggleFromLocalStorage() {
+/** Reads the Agent toggle persisted by AgentToggle.tsx */
+function useAgentToggleFromLocalStorage(storageKey: string = "ia-agent-toggle") {
   const [useAgent, setUseAgent] = useState(false);
 
   useEffect(() => {
+    // initial read
     try {
-      const raw = window.localStorage.getItem("ia.useAgent");
+      const raw = window.localStorage.getItem(storageKey);
       setUseAgent(raw === "true");
     } catch {
       setUseAgent(false);
     }
-    // Listen for changes if your toggle updates localStorage from another component
+    // listen for changes (if toggle flips while component is mounted)
     const onStorage = (evt: StorageEvent) => {
-      if (evt.key === "ia.useAgent") {
-        setUseAgent(evt.newValue === "true");
-      }
+      if (evt.key === storageKey) setUseAgent(evt.newValue === "true");
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [storageKey]);
 
   return useAgent;
 }
@@ -68,7 +64,7 @@ export const ChatInput = () => {
   const { isMicrophoneReady } = useSpeechToText();
   const { rows } = useChatInputDynamicHeight();
 
-  // ✅ read toggle from localStorage (no dependency on a custom hook)
+  // ✅ Read "Use Agent (Web Search)" ON/OFF
   const useAgent = useAgentToggleFromLocalStorage();
 
   const submitButton = React.useRef<HTMLButtonElement>(null);
@@ -82,29 +78,20 @@ export const ChatInput = () => {
 
   const handleSubmit: React.FormEventHandler<HTMLFormElement> = (e) => {
     e.preventDefault();
-
-    // Ensure the form has the correct endpoint at the moment of submit
-    (e.currentTarget as HTMLFormElement).action = useAgent
-      ? "/api/agent-chat"
-      : "/api/chat";
-
-    // Hand off to the existing store pipeline.
-    // If chatStore.submitChat(e) ignores form.action,
-    // add the tiny patch shown below to make it read "__useAgent".
+    // Let the store handle the request. It will read the hidden fields.
     chatStore.submitChat(e);
   };
 
   return (
     <ChatInputForm
       ref={formRef}
-      action={useAgent ? "/api/agent-chat" : "/api/chat"}
       onSubmit={handleSubmit}
       status={uploadButtonLabel}
     >
-      {/* Hidden flag for the store to read if it doesn't use form.action */}
+      {/* Hidden flags for the store */}
       <input type="hidden" name="__useAgent" value={useAgent ? "true" : "false"} />
-      {/* Optional: pass the current input explicitly if your store reads FormData */}
       <input type="hidden" name="message" value={input ?? ""} />
+      <input type="hidden" name="conversationId" value={chatThreadId ?? ""} />
 
       <ChatTextInput
         onBlur={(e) => {
@@ -152,4 +139,3 @@ export const ChatInput = () => {
     </ChatInputForm>
   );
 };
-``
