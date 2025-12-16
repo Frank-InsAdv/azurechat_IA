@@ -4,23 +4,32 @@ import "server-only";
 import { DefaultAzureCredential } from "@azure/identity";
 import { AIProjectClient } from "@azure/ai-projects";
 
-// --- Environment ---
-const endpoint = process.env.AZURE_AIPROJECT_ENDPOINT;
-if (!endpoint) throw new Error("Missing AZURE_AIPROJECT_ENDPOINT");
+/**
+ * Lazily create an AIProjectClient using runtime env.
+ * This avoids throwing at module import during CI builds.
+ */
+function createProjectClient(): AIProjectClient {
+  // Accept either variable name (some docs use *_ENDPOINT_STRING)
+  const endpoint =
+    process.env.AZURE_AIPROJECT_ENDPOINT ||
+    process.env.AZURE_AI_PROJECT_ENDPOINT_STRING;
 
-const agentName = process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini";
-// Optional: pin a specific version, e.g., "agent-gpt-5-mini:2"
-const agentId = process.env.AZURE_AGENT_ID;
-
-// Single server-side client (Managed Identity)
-export const projectClient = new AIProjectClient(endpoint, new DefaultAzureCredential());
+  if (!endpoint) {
+    throw new Error(
+      "Missing AZURE_AIPROJECT_ENDPOINT (or AZURE_AI_PROJECT_ENDPOINT_STRING). " +
+        "Set it in your Azure Web App application settings."
+    );
+  }
+  return new AIProjectClient(endpoint, new DefaultAzureCredential());
+}
 
 /**
  * Get the OpenAI client bound to your Foundry Project.
- * - SDK 1.0.x: projectClient.getAzureOpenAIClient()
- * - SDK 2.x preview: projectClient.getOpenAIClient()
+ * - SDK 1.0.x: getAzureOpenAIClient()
+ * - SDK 2.x preview: getOpenAIClient()
  */
 export async function getOpenAIClient() {
+  const projectClient = createProjectClient();
   const anyClient = projectClient as any;
 
   if (typeof anyClient.getAzureOpenAIClient === "function") {
@@ -31,22 +40,26 @@ export async function getOpenAIClient() {
   }
   throw new Error(
     "Neither getAzureOpenAIClient() nor getOpenAIClient() exists on AIProjectClient. " +
-    "Check the @azure/ai-projects version."
+      "Check the @azure/ai-projects package version."
   );
 }
 
-/** Create a new conversation, optionally seeded with a user message. */
+// ------- Conversation helpers (unchanged) -------
+
 export async function createConversation(openAIClient: any, initialUserText?: string) {
   const conversation = await openAIClient.conversations.create({
     items: initialUserText
       ? [{ type: "message", role: "user", content: initialUserText }]
-      : []
+      : [],
   });
   return conversation.id as string;
 }
 
-/** Append a user message to an existing conversation. */
-export async function appendUserMessage(openAIClient: any, conversationId: string, userText: string) {
+export async function appendUserMessage(
+  openAIClient: any,
+  conversationId: string,
+  userText: string
+) {
   if (!userText) return;
   const conv = await openAIClient.conversations.get(conversationId);
   const items = conv.items ?? [];
@@ -54,7 +67,6 @@ export async function appendUserMessage(openAIClient: any, conversationId: strin
   await openAIClient.conversations.update(conversationId, { items });
 }
 
-/** Create or reuse a conversation and add the user message appropriately. */
 export async function ensureConversation(
   openAIClient: any,
   conversationId?: string,
@@ -69,14 +81,16 @@ export async function ensureConversation(
 
 /**
  * Stream the Agent response (SSE-style).
- * Forward `delta` chunks to the client via your API route.
+ * Sends `delta` chunks via the provided callback.
  */
 export async function streamAgentResponse(
   openAIClient: any,
   conversationId: string,
   onDelta: (text: string) => void
 ) {
-  // Build the agent reference: by id (if provided) or by name (latest version)
+  const agentName = process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini";
+  const agentId = process.env.AZURE_AGENT_ID; // optional pin, e.g. "agent-gpt-5-mini:2"
+
   const agentRef =
     agentId && agentId.length > 0
       ? { id: agentId, type: "agent_reference" }
@@ -87,13 +101,13 @@ export async function streamAgentResponse(
     { body: { agent: agentRef } }
   );
 
-  // Stream OpenAI Responses API events; consume text deltas
   for await (const event of stream) {
     if (event.type === "response.output_text.delta") {
       onDelta(event.delta);
     } else if (event.type === "response.error") {
       throw new Error(event.error?.message ?? "Agent response error");
     }
-    // (Optional) extend handling for tool-call events later if needed
+    // ignore other event types; extend later for tools if needed
   }
 }
+``
