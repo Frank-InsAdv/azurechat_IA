@@ -149,5 +149,5 @@ export async function streamAgentResponse(
     } else if (event.type === "response.error") {
       throw new Error(event.error?.message ?? "Agent response error");
     }
-    // Ignore other event types; extend later for tools if    // Ignore other event types; extend later for tools if needed.
+    // Ignore other event types; extend later    // Ignore other event types; extend later for tools if needed.
   }
