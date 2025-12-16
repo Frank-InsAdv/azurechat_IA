@@ -16,9 +16,14 @@ import {
  */
 export async function POST(req: Request) {
   try {
-    const { message, conversationId } = await req.json();
+    const body = await req.json();
+    const message: string | undefined = body?.message;
+    const conversationId: string | undefined =
+      body?.conversationId && String(body.conversationId).trim().length > 0
+        ? String(body.conversationId)
+        : undefined;
 
-    if (!message || typeof message !== "string") {
+    if (!message || typeof message !== "string" || message.trim().length === 0) {
       return new Response(
         JSON.stringify({
           error: "Body must include a non-empty 'message' string.",
@@ -39,9 +44,7 @@ export async function POST(req: Request) {
             // onDelta
             (delta) => {
               controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ delta })}\n\n`
-                )
+                encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`)
               );
             },
             // onConversationId
@@ -84,4 +87,3 @@ export async function POST(req: Request) {
     );
   }
 }
-``
