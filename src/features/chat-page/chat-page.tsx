@@ -20,7 +20,7 @@ import {
 } from "./chat-services/models";
 import MessageContent from "./message-content";
 
-// ✅ NEW: Toggle to switch between Agent (web search) and Model
+// NEW: Agent toggle
 import AgentToggle from "@/features/common/components/AgentToggle";
 
 interface ChatPageProps {
@@ -46,7 +46,7 @@ export const ChatPage: FC<ChatPageProps> = (props) => {
   const current = useRef<HTMLDivElement>(null);
   useChatScrollAnchor({ ref: current });
 
-  // ✅ NEW: local state reflecting the Agent toggle (not yet used to change send path)
+  // NEW: local state reflecting the Agent toggle
   const [useAgent, setUseAgent] = useState<boolean>(false);
 
   return (
@@ -57,13 +57,13 @@ export const ChatPage: FC<ChatPageProps> = (props) => {
         extensions={props.extensions}
       />
 
-      {/* ✅ NEW: Agent toggle (positioned under header) */}
+      {/* NEW: Agent toggle (positioned under header) */}
       <div className="px-4 py-2 border-b border-muted/30">
         <AgentToggle
           onToggle={(enabled) => setUseAgent(enabled)}
-          // Optional: uncomment to force an initial state on first render:
+          // Optional: force initial state
           // initialEnabled={true}
-          // helperText overrides available if you prefer shorter copy:
+          // Optional: customize copy
           // helperText="Send via Agent (live web) or standard model."
         />
       </div>
@@ -80,9 +80,7 @@ export const ChatPage: FC<ChatPageProps> = (props) => {
                   navigator.clipboard.writeText(message.content);
                 }}
                 profilePicture={
-                  message.role === "assistant"
-                    ? "/ai-icon.png"
-                    : session?.user?.image
+                  message.role === "assistant" ? "/ai-icon.png" : session?.user?.image
                 }
               >
                 <MessageContent message={message} />
@@ -94,9 +92,9 @@ export const ChatPage: FC<ChatPageProps> = (props) => {
       </ChatMessageContainer>
 
       {/* NOTE:
-         We are NOT passing new props to ChatInput here to avoid breaking its current signature.
-         ChatInput (or the store) can later read localStorage (key: "ia-agent-toggle")
-         to decide whether to call /api/agent-chat or the existing /api/chat route. */}
-      <ChatInput      <ChatInput />
+         We are NOT changing ChatInput props yet to avoid breaking its signature.
+         After we add /api/agent-chat, ChatInput (or the store) can read localStorage
+         (key: "ia-agent-toggle") or a shared state to decide route. */}
+           <ChatInput />
     </main>
   );
