@@ -1,4 +1,3 @@
-
 "use server";
 import "server-only";
 
@@ -24,7 +23,7 @@ function resolveApiVersion(): string {
 }
 
 /**
- * Temporarily mask any OpenAI API key env vars (set to undefined) so the Projects factory
+ * Temporarily mask any OpenAI API key env vars (set to empty string) so the Projects factory
  * uses Managed Identity only; then restore them right after the client is created.
  * NOTE: This does NOT delete your App Settings. It's an in-process, temporary mask.
  */
@@ -37,7 +36,7 @@ function temporarilyMaskOpenAIKeyEnv(): () => void {
     OPENAI_KEY: (env as any).OPENAI_KEY as string | undefined, // legacy alias
   };
 
-  // Mask by assigning undefined (valid per NodeJS.ProcessEnv: string | undefined)
+  // Mask by assigning empty strings (type-safe for builds that type keys as `string`)
   env.OPENAI_API_KEY = "";
   env.AZURE_OPENAI_API_KEY = "";
   (env as any).OPENAI_KEY = "";
@@ -71,33 +70,37 @@ function createProjectClient(): AIProjectClient {
 
 /**
  * Get the OpenAI client bound to your Foundry Project.
- * - Uses Managed Identity via AI Projects.
- * - Avoids the "apiKey and azureADTokenProvider are mutually exclusive" error
- *   by temporarily masking any API key env vars during client creation.
+ * ✅ Prefer the Projects client (`getOpenAIClient`) which exposes `responses` and `conversations`.
+ * ⬇️ Fallback to Azure client only if Projects client is not available.
+ * Mask key envs during instantiation to avoid the mutually-exclusive auth error,
+ * then restore them so your standard `/api/chat` remains unaffected.
  */
 export async function getOpenAIClient() {
   // Ensure version visible to the factories
   resolveApiVersion();
 
-  const projectClient = createProjectClient();
-  const anyClient = projectClient as any;
-
-  // Temporarily mask key envs while instantiating OpenAI client (MI-only),
-  // then restore so other parts of the app (e.g., /api/chat) remain unaffected.
+  // Mask keys (MI-only during client creation)
   const restore = temporarilyMaskOpenAIKeyEnv();
   try {
-    if (typeof anyClient.getAzureOpenAIClient === "function") {
-      // Avoid passing options that could reintroduce conflicts
-      return await anyClient.getAzureOpenAIClient();
-    }
+    const projectClient = createProjectClient();
+    const anyClient = projectClient as any;
+
+    // ✅ Prefer the Projects client first
     if (typeof anyClient.getOpenAIClient === "function") {
-      return await anyClient.getOpenAIClient();
+      return await anyClient.getOpenAIClient(); // Projects-bound; has `.responses` + `.conversations`
     }
+
+    // ⬇️ Fallback only if Projects client factory not present
+    if (typeof anyClient.getAzureOpenAIClient === "function") {
+      return await anyClient.getAzureOpenAIClient(); // Azure OpenAI (likely lacks `.conversations`)
+    }
+
     throw new Error(
-      "Neither getAzureOpenAIClient() nor getOpenAIClient() exists on AIProjectClient. " +
+      "Neither getOpenAIClient() nor getAzureOpenAIClient() exists on AIProjectClient. " +
         "Check the @azure/ai-projects package version."
     );
   } finally {
+    // Restore env immediately so the standard /api/chat path (key-based) still sees the key
     restore();
   }
 }
@@ -107,7 +110,7 @@ export async function getOpenAIClient() {
 export async function createConversation(openAIClient: any, initialUserText?: string) {
   const conversation = await openAIClient.conversations.create({
     items: initialUserText
-      ? [{ type: "message", role: "user,", content: initialUserText }]
+      ? [{ type: "message", role: "user", content: initialUserText }]
       : [],
   });
   return conversation.id as string;
@@ -168,4 +171,3 @@ export async function streamAgentResponse(
     // ignore other event types; extend later for tools if needed
   }
 }
-``
