@@ -15,7 +15,6 @@ function resolveApiVersion(): string {
       process.env.OPENAI_API_VERSION?.trim() ||
       "2024-05-01-preview");
 
-  // Ensure downstream code that *expects* OPENAI_API_VERSION sees a value.
   if (!process.env.OPENAI_API_VERSION || process.env.OPENAI_API_VERSION.trim().length === 0) {
     process.env.OPENAI_API_VERSION = v;
   }
@@ -36,12 +35,10 @@ function temporarilyMaskOpenAIKeyEnv(): () => void {
     OPENAI_KEY: (env as any).OPENAI_KEY as string | undefined, // legacy alias
   };
 
-  // Mask by assigning empty strings (type-safe for builds that type keys as `string`)
   env.OPENAI_API_KEY = "";
   env.AZURE_OPENAI_API_KEY = "";
   (env as any).OPENAI_KEY = "";
 
-  // Return restore function
   return () => {
     env.OPENAI_API_KEY = original.OPENAI_API_KEY;
     env.AZURE_OPENAI_API_KEY = original.AZURE_OPENAI_API_KEY;
@@ -51,10 +48,8 @@ function temporarilyMaskOpenAIKeyEnv(): () => void {
 
 /**
  * Lazily create an AIProjectClient using runtime env.
- * This avoids throwing at module import during CI builds.
  */
 function createProjectClient(): AIProjectClient {
-  // Accept either variable name (some docs use *_ENDPOINT_STRING)
   const endpoint =
     process.env.AZURE_AIPROJECT_ENDPOINT ||
     process.env.AZURE_AI_PROJECT_ENDPOINT_STRING;
@@ -70,84 +65,48 @@ function createProjectClient(): AIProjectClient {
 
 /**
  * Get the OpenAI client bound to your Foundry Project.
- * ✅ Prefer the Projects client (`getOpenAIClient`) which exposes `responses` and `conversations`.
+ * ✅ Prefer the Projects client (`getOpenAIClient`) which exposes `responses.*`.
  * ⬇️ Fallback to Azure client only if Projects client is not available.
  * Mask key envs during instantiation to avoid the mutually-exclusive auth error,
- * then restore them so your standard `/api/chat` remains unaffected.
+ * then restore so your standard `/api/chat` remains unaffected.
  */
 export async function getOpenAIClient() {
-  // Ensure version visible to the factories
   resolveApiVersion();
 
-  // Mask keys (MI-only during client creation)
   const restore = temporarilyMaskOpenAIKeyEnv();
   try {
     const projectClient = createProjectClient();
     const anyClient = projectClient as any;
 
-    // ✅ Prefer the Projects client first
     if (typeof anyClient.getOpenAIClient === "function") {
-      return await anyClient.getOpenAIClient(); // Projects-bound; has `.responses` + `.conversations`
+      return await anyClient.getOpenAIClient(); // Projects-bound; has `.responses`
     }
-
-    // ⬇️ Fallback only if Projects client factory not present
     if (typeof anyClient.getAzureOpenAIClient === "function") {
-      return await anyClient.getAzureOpenAIClient(); // Azure OpenAI (likely lacks `.conversations`)
+      return await anyClient.getAzureOpenAIClient(); // Azure OpenAI (responses likely present; no conversations)
     }
-
     throw new Error(
       "Neither getOpenAIClient() nor getAzureOpenAIClient() exists on AIProjectClient. " +
         "Check the @azure/ai-projects package version."
     );
   } finally {
-    // Restore env immediately so the standard /api/chat path (key-based) still sees the key
     restore();
   }
 }
 
-// ------- Conversation helpers (unchanged) -------
-
-export async function createConversation(openAIClient: any, initialUserText?: string) {
-  const conversation = await openAIClient.conversations.create({
-    items: initialUserText
-      ? [{ type: "message", role: "user", content: initialUserText }]
-      : [],
-  });
-  return conversation.id as string;
-}
-
-export async function appendUserMessage(
-  openAIClient: any,
-  conversationId: string,
-  userText: string
-) {
-  if (!userText) return;
-  const conv = await openAIClient.conversations.get(conversationId);
-  const items = conv.items ?? [];
-  items.push({ type: "message", role: "user", content: userText });
-  await openAIClient.conversations.update(conversationId, { items });
-}
-
-export async function ensureConversation(
-  openAIClient: any,
-  conversationId?: string,
-  userText?: string
-) {
-  if (!conversationId) {
-    return await createConversation(openAIClient, userText);
-  }
-  await appendUserMessage(openAIClient, conversationId, userText ?? "");
-  return conversationId;
-}
-
 /**
- * Stream the Agent response (SSE-style).
- * Sends `delta` chunks via the provided callback.
+ * Stream the Agent response (SSE-style) using the Responses API.
+ * - If `conversationId` is provided, the API continues that thread.
+ * - Otherwise, the API will start a new conversation and the stream will
+ *   include events that allow us to discover its id (we emit via `onConversationId`).
  */
 export async function streamAgentResponse(
   openAIClient: any,
-  conversationId: string,
-  onDelta: (text: string) => void
+  params: {
+    conversationId?: string;
+    userText: string;
+  },
+  onDelta: (text: string) => void,
+  onConversationId?: (id: string) => void
 ) {
   const agentName = process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini";
   const agentId = process.env.AZURE_AGENT_ID; // optional pin, e.g. "agent-gpt-5-mini:2"
@@ -157,17 +116,37 @@ export async function streamAgentResponse(
       ? { id: agentId, type: "agent_reference" }
       : { name: agentName, type: "agent_reference" };
 
-  const stream = await openAIClient.responses.stream(
-    { conversation: conversationId },
-    { body: { agent: agentRef } }
-  );
+  // Build request using Responses API.
+  // Include the user text inline (no conversations.* mutations).
+  const requestArgs: any = {};
+  if (params.conversationId) {
+    requestArgs.conversation = params.conversationId;
+  }
+
+  const stream = await openAIClient.responses.stream(requestArgs, {
+    body: { agent: agentRef, input: params.userText },
+  });
+
+  let emittedConversationId = false;
 
   for await (const event of stream) {
+    // Try to detect conversation id from any event carrying `response`
+    const responseObj: any = (event as any).response;
+    const convIdCandidate =
+      responseObj?.conversation ??
+      responseObj?.conversation_id ??
+      responseObj?.id;
+
+    if (!emittedConversationId && typeof convIdCandidate === "string") {
+      onConversationId?.(convIdCandidate);
+      emittedConversationId = true;
+    }
+
     if (event.type === "response.output_text.delta") {
       onDelta(event.delta);
     } else if (event.type === "response.error") {
       throw new Error(event.error?.message ?? "Agent response error");
     }
-    // ignore other event types; extend later for tools if needed
+    // Ignore other event types; extend later for tools if needed.
   }
 }
