@@ -1,3 +1,4 @@
+
 "use server";
 import "server-only";
 
@@ -35,10 +36,12 @@ function temporarilyMaskOpenAIKeyEnv(): () => void {
     OPENAI_KEY: (env as any).OPENAI_KEY as string | undefined, // legacy alias
   };
 
+  // Mask by assigning empty strings (type-safe across builds)
   env.OPENAI_API_KEY = "";
   env.AZURE_OPENAI_API_KEY = "";
   (env as any).OPENAI_KEY = "";
 
+  // Return restore function
   return () => {
     env.OPENAI_API_KEY = original.OPENAI_API_KEY;
     env.AZURE_OPENAI_API_KEY = original.AZURE_OPENAI_API_KEY;
@@ -82,7 +85,7 @@ export async function getOpenAIClient() {
       return await anyClient.getOpenAIClient(); // Projects-bound; has `.responses`
     }
     if (typeof anyClient.getAzureOpenAIClient === "function") {
-      return await anyClient.getAzureOpenAIClient(); // Azure OpenAI (responses likely present; no conversations)
+      return await anyClient.getAzureOpenAIClient(); // Azure OpenAI; `.responses` available, no `.conversations`
     }
     throw new Error(
       "Neither getOpenAIClient() nor getAzureOpenAIClient() exists on AIProjectClient. " +
@@ -147,6 +150,5 @@ export async function streamAgentResponse(
     } else if (event.type === "response.error") {
       throw new Error(event.error?.message ?? "Agent response error");
     }
-    // Ignore other event types; extend later for tools if needed.
+    // Ignore other event types; extend later for tools if    // Ignore other event types; extend later for tools if needed.
   }
-}
