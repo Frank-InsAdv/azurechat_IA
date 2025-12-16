@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef } from "react";
 
 import {
   ResetInputRows,
@@ -34,27 +34,16 @@ import {
   useTextToSpeech,
 } from "./speech/use-text-to-speech";
 
-/** Reads the Agent toggle persisted by AgentToggle.tsx */
-function useAgentToggleFromLocalStorage(storageKey: string = "ia-agent-toggle") {
-  const [useAgent, setUseAgent] = useState(false);
-
-  useEffect(() => {
-    // initial read
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      setUseAgent(raw === "true");
-    } catch {
-      setUseAgent(false);
-    }
-    // listen for changes (if toggle flips while component is mounted)
-    const onStorage = (evt: StorageEvent) => {
-      if (evt.key === storageKey) setUseAgent(evt.newValue === "true");
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [storageKey]);
-
-  return useAgent;
+/**
+ * Read the latest toggle value directly from localStorage.
+ * AgentToggle.tsx persists: localStorage.setItem("ia-agent-toggle", "true" | "false")
+ */
+function readAgentToggle(): boolean {
+  try {
+    return window.localStorage.getItem("ia-agent-toggle") === "true";
+  } catch {
+    return false;
+  }
 }
 
 export const ChatInput = () => {
@@ -63,9 +52,6 @@ export const ChatInput = () => {
   const { isPlaying } = useTextToSpeech();
   const { isMicrophoneReady } = useSpeechToText();
   const { rows } = useChatInputDynamicHeight();
-
-  // ✅ Read "Use Agent (Web Search)" ON/OFF
-  const useAgent = useAgentToggleFromLocalStorage();
 
   const submitButton = React.useRef<HTMLButtonElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -78,7 +64,21 @@ export const ChatInput = () => {
 
   const handleSubmit: React.FormEventHandler<HTMLFormElement> = (e) => {
     e.preventDefault();
-    // Let the store handle the request. It will read the hidden fields.
+
+    // 🔽 Ensure hidden fields reflect the *current* toggle and message at submit time
+    const form = e.currentTarget as HTMLFormElement;
+    const useAgentNow = readAgentToggle();
+
+    const agentFlagInput = form.querySelector<HTMLInputElement>('input[name="__useAgent"]');
+    if (agentFlagInput) agentFlagInput.value = useAgentNow ? "true" : "false";
+
+    const messageInput = form.querySelector<HTMLInputElement>('input[name="message"]');
+    if (messageInput) messageInput.value = input ?? "";
+
+    const convInput = form.querySelector<HTMLInputElement>('input[name="conversationId"]');
+    if (convInput) convInput.value = chatThreadId ?? "";
+
+    // Hand off to the existing store pipeline – it will read __useAgent and switch
     chatStore.submitChat(e);
   };
 
@@ -88,10 +88,10 @@ export const ChatInput = () => {
       onSubmit={handleSubmit}
       status={uploadButtonLabel}
     >
-      {/* Hidden flags for the store */}
-      <input type="hidden" name="__useAgent" value={useAgent ? "true" : "false"} />
-      <input type="hidden" name="message" value={input ?? ""} />
-      <input type="hidden" name="conversationId" value={chatThreadId ?? ""} />
+      {/* Hidden fields (values will be set right before submit) */}
+      <input type="hidden" name="__useAgent" value="false" />
+      <input type="hidden" name="message" value="" />
+      <input type="hidden" name="conversationId" value="" />
 
       <ChatTextInput
         onBlur={(e) => {
