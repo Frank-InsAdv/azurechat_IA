@@ -1,3 +1,4 @@
+
 "use server";
 import "server-only";
 
@@ -23,30 +24,29 @@ function resolveApiVersion(): string {
 }
 
 /**
- * Temporarily remove any OpenAI API key env vars so the Projects factory
+ * Temporarily mask any OpenAI API key env vars (set to undefined) so the Projects factory
  * uses Managed Identity only; then restore them right after the client is created.
+ * NOTE: This does NOT delete your App Settings. It's an in-process, temporary mask.
  */
-function temporarilyDisableOpenAIKeyEnv(): () => void {
+function temporarilyMaskOpenAIKeyEnv(): () => void {
+  const env = process.env as NodeJS.ProcessEnv;
+
   const original = {
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    AZURE_OPENAI_API_KEY: process.env.AZURE_OPENAI_API_KEY,
-    OPENAI_KEY: (process.env as any).OPENAI_KEY, // legacy alias
+    OPENAI_API_KEY: env.OPENAI_API_KEY,
+    AZURE_OPENAI_API_KEY: env.AZURE_OPENAI_API_KEY,
+    OPENAI_KEY: (env as any).OPENAI_KEY as string | undefined, // legacy alias
   };
 
-  delete process.env.OPENAI_API_KEY;
-  delete process.env.AZURE_OPENAI_API_KEY;
-  delete (process.env as any).OPENAI_KEY;
+  // Mask by assigning undefined (valid per NodeJS.ProcessEnv: string | undefined)
+  env.OPENAI_API_KEY = undefined;
+  env.AZURE_OPENAI_API_KEY = undefined;
+  (env as any).OPENAI_KEY = undefined;
 
+  // Return restore function
   return () => {
-    if (original.OPENAI_API_KEY !== undefined) {
-      process.env.OPENAI_API_KEY = original.OPENAI_API_KEY as string;
-    }
-    if (original.AZURE_OPENAI_API_KEY !== undefined) {
-      process.env.AZURE_OPENAI_API_KEY = original.AZURE_OPENAI_API_KEY as string;
-    }
-    if (original.OPENAI_KEY !== undefined) {
-      (process.env as any).OPENAI_KEY = original.OPENAI_KEY;
-    }
+    env.OPENAI_API_KEY = original.OPENAI_API_KEY;
+    env.AZURE_OPENAI_API_KEY = original.AZURE_OPENAI_API_KEY;
+    (env as any).OPENAI_KEY = original.OPENAI_KEY;
   };
 }
 
@@ -79,16 +79,15 @@ export async function getOpenAIClient() {
   // Ensure version visible to the factories
   resolveApiVersion();
 
-  // Build the Projects client first
   const projectClient = createProjectClient();
   const anyClient = projectClient as any;
 
-  // Temporarily disable key envs while instantiating OpenAI client (MI-only),
-  // then restore them so other parts of the app (e.g., /api/chat) remain unaffected.
-  const restore = temporarilyDisableOpenAIKeyEnv();
+  // Temporarily mask key envs while instantiating OpenAI client (MI-only),
+  // then restore so other parts of the app (e.g., /api/chat) remain unaffected.
+  const restore = temporarilyMaskOpenAIKeyEnv();
   try {
     if (typeof anyClient.getAzureOpenAIClient === "function") {
-      // Some SDKs accept options; others ignore. We pass none to avoid conflicts.
+      // Avoid passing options that could reintroduce conflicts
       return await anyClient.getAzureOpenAIClient();
     }
     if (typeof anyClient.getOpenAIClient === "function") {
@@ -108,7 +107,7 @@ export async function getOpenAIClient() {
 export async function createConversation(openAIClient: any, initialUserText?: string) {
   const conversation = await openAIClient.conversations.create({
     items: initialUserText
-      ? [{ type: "message", role: "user", content: initialUserText }]
+      ? [{ type: "message", role: "user,", content: initialUserText }]
       : [],
   });
   return conversation.id as string;
@@ -169,3 +168,4 @@ export async function streamAgentResponse(
     // ignore other event types; extend later for tools if needed
   }
 }
+``
