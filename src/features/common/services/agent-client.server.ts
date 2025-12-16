@@ -5,6 +5,24 @@ import { DefaultAzureCredential } from "@azure/identity";
 import { AIProjectClient } from "@azure/ai-projects";
 
 /**
+ * Returns a usable OpenAI API version.
+ * Prefers AZURE_OPENAI_API_VERSION, then OPENAI_API_VERSION, then a safe default.
+ * Also writes OPENAI_API_VERSION to process.env for downstream factories that expect it.
+ */
+function resolveApiVersion(): string {
+  const v =
+    (process.env.AZURE_OPENAI_API_VERSION?.trim() ||
+      process.env.OPENAI_API_VERSION?.trim() ||
+      "2024-05-01-preview");
+
+  // Ensure downstream code that *expects* OPENAI_API_VERSION sees a value.
+  if (!process.env.OPENAI_API_VERSION || process.env.OPENAI_API_VERSION.trim().length === 0) {
+    process.env.OPENAI_API_VERSION = v;
+  }
+  return v;
+}
+
+/**
  * Lazily create an AIProjectClient using runtime env.
  * This avoids throwing at module import during CI builds.
  */
@@ -14,7 +32,7 @@ function createProjectClient(): AIProjectClient {
     process.env.AZURE_AIPROJECT_ENDPOINT ||
     process.env.AZURE_AI_PROJECT_ENDPOINT_STRING;
 
-  if (!endpoint) {
+  if (!endpoint || endpoint.trim().length === 0) {
     throw new Error(
       "Missing AZURE_AIPROJECT_ENDPOINT (or AZURE_AI_PROJECT_ENDPOINT_STRING). " +
         "Set it in your Azure Web App application settings."
@@ -27,17 +45,33 @@ function createProjectClient(): AIProjectClient {
  * Get the OpenAI client bound to your Foundry Project.
  * - SDK 1.0.x: getAzureOpenAIClient()
  * - SDK 2.x preview: getOpenAIClient()
+ * Some versions accept an options object with { apiVersion }, others don't.
+ * We attempt options first, then gracefully fall back.
  */
 export async function getOpenAIClient() {
   const projectClient = createProjectClient();
   const anyClient = projectClient as any;
+  const apiVersion = resolveApiVersion();
 
+  // Prefer Azure client factory if present
   if (typeof anyClient.getAzureOpenAIClient === "function") {
-    return await anyClient.getAzureOpenAIClient();
+    // Try with options → fall back to zero-arg if the signature doesn't accept them
+    try {
+      return await anyClient.getAzureOpenAIClient({ apiVersion });
+    } catch {
+      return await anyClient.getAzureOpenAIClient();
+    }
   }
+
+  // Otherwise use the generic OpenAI client factory
   if (typeof anyClient.getOpenAIClient === "function") {
-    return await anyClient.getOpenAIClient();
+    try {
+      return await anyClient.getOpenAIClient({ apiVersion });
+    } catch {
+      return await anyClient.getOpenAIClient();
+    }
   }
+
   throw new Error(
     "Neither getAzureOpenAIClient() nor getOpenAIClient() exists on AIProjectClient. " +
       "Check the @azure/ai-projects package version."
