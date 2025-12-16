@@ -38,9 +38,9 @@ function temporarilyMaskOpenAIKeyEnv(): () => void {
   };
 
   // Mask by assigning undefined (valid per NodeJS.ProcessEnv: string | undefined)
-  env.OPENAI_API_KEY = undefined;
-  env.AZURE_OPENAI_API_KEY = undefined;
-  (env as any).OPENAI_KEY = undefined;
+  env.OPENAI_API_KEY = "";
+  env.AZURE_OPENAI_API_KEY = "";
+  (env as any).OPENAI_KEY = "";
 
   // Return restore function
   return () => {
