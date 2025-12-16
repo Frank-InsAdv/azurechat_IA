@@ -23,6 +23,7 @@ import {
   ChatMessageModel,
   ChatThreadModel,
 } from "./chat-services/models";
+
 let abortController: AbortController = new AbortController();
 
 type chatStatus = "idle" | "loading" | "file upload";
@@ -278,16 +279,99 @@ class ChatState {
       return;
     }
 
-    // get form data from e
-    const formData = new FormData(e.currentTarget);
+    const form = e.currentTarget as HTMLFormElement;
+    const formData = new FormData(form);
 
+    // Read toggle from hidden field provided by chat-input.tsx
+    const useAgent = formData.get("__useAgent") === "true";
+    const multimodalImage = (formData.get("image-base64") as unknown as string) || "";
+
+    if (useAgent) {
+      // ===== Agent path: JSON + SSE via /api/agent-chat =====
+      this.updateAutoScroll(true);
+      this.loading = "loading";
+
+      // 1) Add user message first (keeps UX consistent with standard path)
+      const newUserMessage: ChatMessageModel = {
+        id: uniqueId(),
+        role: "user",
+        content: this.input,
+        name: this.userName,
+        multiModalImage: multimodalImage,
+        createdAt: new Date(),
+        isDeleted: false,
+        threadId: this.chatThreadId,
+        type: "CHAT_MESSAGE",
+        userId: "",
+      };
+      this.messages.push(newUserMessage);
+      this.reset();
+
+      // 2) Create assistant placeholder to stream into
+      const assistantId = uniqueId();
+      const assistantMsg: ChatMessageModel = {
+        id: assistantId,
+        content: "",
+        name: AI_NAME,
+        role: "assistant",
+        createdAt: new Date(),
+        isDeleted: false,
+        threadId: this.chatThreadId,
+        type: "CHAT_MESSAGE",
+        userId: "",
+        multiModalImage: "",
+      };
+      this.addToMessages(assistantMsg);
+
+      try {
+        // Import your client-side Agent helper
+        const { sendViaAgentCancellable } = await import(
+          "@/features/common/services/agent-chat"
+        );
+
+        // Kick off Agent streaming
+        const { controller, promise } = sendViaAgentCancellable(this.input, {
+          conversationId: (this.chatThreadId || "").trim() || undefined,
+          onDelta: (text: string) => {
+            const msg = this.messages.find((m) => m.id === assistantId);
+            if (msg) {
+              msg.content = (msg.content || "") + text;
+              this.lastMessage = msg.content;
+              // Update in-place so UI reflects stream
+              this.addToMessages(msg);
+            }
+          },
+          onComplete: () => {
+            this.loading = "idle";
+            this.completed(this.lastMessage);
+            this.updateTitle();
+          },
+        });
+
+        // Wire Stop button
+        abortController = controller;
+
+        // Persist returned conversationId if Agent started/continued a thread
+        const { conversationId } = await promise;
+        if (conversationId && conversationId !== this.chatThreadId) {
+          this.chatThreadId = conversationId;
+        }
+      } catch (err) {
+        showError("" + err);
+        this.loading = "idle";
+      }
+
+      return; // Do not fall through to standard path
+    }
+
+    // ===== Standard model path: FormData + SSE via /api/chat =====
     const body = JSON.stringify({
       id: this.chatThreadId,
       message: this.input,
     });
     formData.append("content", body);
 
-    this.chat(formData);
+    await this.chat(formData);
   }
 }
 
