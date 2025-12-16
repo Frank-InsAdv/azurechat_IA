@@ -1,3 +1,4 @@
+
 "use client";
 import { uniqueId } from "@/features/common/util";
 import { showError } from "@/features/globals/global-message-store";
@@ -248,7 +249,7 @@ class ChatState {
           const { value, done: doneReading } = await reader.read();
           done = doneReading;
 
-          const chunkValue = decoder.decode(value);
+        const chunkValue = decoder.decode(value);
           parser.feed(chunkValue);
         }
         this.loading = "idle";
@@ -282,20 +283,24 @@ class ChatState {
     const form = e.currentTarget as HTMLFormElement;
     const formData = new FormData(form);
 
-    // Read toggle from hidden field provided by chat-input.tsx
+    // Read toggle and image from the form
     const useAgent = formData.get("__useAgent") === "true";
-    const multimodalImage = (formData.get("image-base64") as unknown as string) || "";
+    const multimodalImage =
+      (formData.get("image-base64") as unknown as string) || "";
+
+    // 👇 Capture the input BEFORE reset so Agent gets a non-empty message
+    const messageText = this.input;
 
     if (useAgent) {
       // ===== Agent path: JSON + SSE via /api/agent-chat =====
       this.updateAutoScroll(true);
       this.loading = "loading";
 
-      // 1) Add user message first (keeps UX consistent with standard path)
+      // 1) Add user message first (consistent UX)
       const newUserMessage: ChatMessageModel = {
         id: uniqueId(),
         role: "user",
-        content: this.input,
+        content: messageText,
         name: this.userName,
         multiModalImage: multimodalImage,
         createdAt: new Date(),
@@ -305,9 +310,11 @@ class ChatState {
         userId: "",
       };
       this.messages.push(newUserMessage);
+
+      // 2) Reset input and UI rows AFTER capturing messageText
       this.reset();
 
-      // 2) Create assistant placeholder to stream into
+      // 3) Create assistant placeholder to stream into
       const assistantId = uniqueId();
       const assistantMsg: ChatMessageModel = {
         id: assistantId,
@@ -329,15 +336,14 @@ class ChatState {
           "@/features/common/services/agent-chat"
         );
 
-        // Kick off Agent streaming
-        const { controller, promise } = sendViaAgentCancellable(this.input, {
+        // Kick off Agent streaming (use captured messageText)
+        const { controller, promise } = sendViaAgentCancellable(messageText, {
           conversationId: (this.chatThreadId || "").trim() || undefined,
           onDelta: (text: string) => {
             const msg = this.messages.find((m) => m.id === assistantId);
             if (msg) {
               msg.content = (msg.content || "") + text;
               this.lastMessage = msg.content;
-              // Update in-place so UI reflects stream
               this.addToMessages(msg);
             }
           },
@@ -367,7 +373,7 @@ class ChatState {
     // ===== Standard model path: FormData + SSE via /api/chat =====
     const body = JSON.stringify({
       id: this.chatThreadId,
-      message: this.input,
+      message: messageText, // use captured value for consistency
     });
     formData.append("content", body);
 
@@ -380,3 +386,4 @@ export const chatStore = proxy(new ChatState());
 export const useChat = () => {
   return useSnapshot(chatStore, { sync: true });
 };
+``
