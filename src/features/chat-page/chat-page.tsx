@@ -20,7 +20,7 @@ import {
 } from "./chat-services/models";
 import MessageContent from "./message-content";
 
-// NEW: Agent toggle
+// Agent toggle
 import AgentToggle from "@/features/common/components/AgentToggle";
 
 interface ChatPageProps {
@@ -46,7 +46,7 @@ export const ChatPage: FC<ChatPageProps> = (props) => {
   const current = useRef<HTMLDivElement>(null);
   useChatScrollAnchor({ ref: current });
 
-  // NEW: local state reflecting the Agent toggle
+  // Local state from Agent toggle (we'll read this in a later step)
   const [useAgent, setUseAgent] = useState<boolean>(false);
 
   return (
@@ -57,14 +57,12 @@ export const ChatPage: FC<ChatPageProps> = (props) => {
         extensions={props.extensions}
       />
 
-      {/* NEW: Agent toggle (positioned under header) */}
+      {/* Agent toggle (positioned under header) */}
       <div className="px-4 py-2 border-b border-muted/30">
         <AgentToggle
           onToggle={(enabled) => setUseAgent(enabled)}
-          // Optional: force initial state
-          // initialEnabled={true}
-          // Optional: customize copy
-          // helperText="Send via Agent (live web) or standard model."
+          // initialEnabled={true} // optional
+          // helperText="Send via Agent (live web) or standard model." // optional
         />
       </div>
 
@@ -92,9 +90,10 @@ export const ChatPage: FC<ChatPageProps> = (props) => {
       </ChatMessageContainer>
 
       {/* NOTE:
-         We are NOT changing ChatInput props yet to avoid breaking its signature.
-         After we add /api/agent-chat, ChatInput (or the store) can read localStorage
-         (key: "ia-agent-toggle") or a shared state to decide route. */}
-           <ChatInput />
+          We are not changing ChatInput’s props yet.
+          After the /api/agent-chat route is added, ChatInput (or the store)
+          can read localStorage ("ia-agent-toggle") or shared state to decide path. */}
+      <ChatInput />
     </main>
   );
+};
