@@ -1,6 +1,9 @@
 import "server-only";
 
-import { getOpenAIClient, streamAgentResponse } from "@/features/common/services/agent-client.server";
+import {
+  getOpenAIClient,
+  streamAgentResponse,
+} from "@/features/common/services/agent-client.server";
 
 /**
  * POST /api/agent-chat
@@ -17,7 +20,9 @@ export async function POST(req: Request) {
 
     if (!message || typeof message !== "string") {
       return new Response(
-        JSON.stringify({ error: "Body must include a non-empty 'message' string." }),
+        JSON.stringify({
+          error: "Body must include a non-empty 'message' string.",
+        }),
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
@@ -33,19 +38,27 @@ export async function POST(req: Request) {
             { conversationId, userText: message },
             // onDelta
             (delta) => {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`));
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ delta })}\n\n`
+                )
+              );
             },
             // onConversationId
             (convId) => {
               controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify({ conversationId: convId })}\n\n`)
+                encoder.encode(
+                  `data: ${JSON.stringify({ conversationId: convId })}\n\n`
+                )
               );
             }
           );
         } catch (err: any) {
           controller.enqueue(
             encoder.encode(
-              `data: ${JSON.stringify({ error: err?.message ?? "Agent response error" })}\n\n`
+              `data: ${JSON.stringify({
+                error: err?.message ?? "Agent response error",
+              })}\n\n`
             )
           );
         } finally {
@@ -67,6 +80,8 @@ export async function POST(req: Request) {
   } catch (err: any) {
     return new Response(
       JSON.stringify({ error: err?.message ?? "Invalid request body" }),
-      { status: 400, headers: { "Content-Type": "application/json"      { status: 400, headers: { "Content-Type": "application/json" } }
+      { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
+}
+``
