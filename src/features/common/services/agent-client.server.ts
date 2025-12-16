@@ -23,6 +23,34 @@ function resolveApiVersion(): string {
 }
 
 /**
+ * Temporarily remove any OpenAI API key env vars so the Projects factory
+ * uses Managed Identity only; then restore them right after the client is created.
+ */
+function temporarilyDisableOpenAIKeyEnv(): () => void {
+  const original = {
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    AZURE_OPENAI_API_KEY: process.env.AZURE_OPENAI_API_KEY,
+    OPENAI_KEY: (process.env as any).OPENAI_KEY, // legacy alias
+  };
+
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.AZURE_OPENAI_API_KEY;
+  delete (process.env as any).OPENAI_KEY;
+
+  return () => {
+    if (original.OPENAI_API_KEY !== undefined) {
+      process.env.OPENAI_API_KEY = original.OPENAI_API_KEY as string;
+    }
+    if (original.AZURE_OPENAI_API_KEY !== undefined) {
+      process.env.AZURE_OPENAI_API_KEY = original.AZURE_OPENAI_API_KEY as string;
+    }
+    if (original.OPENAI_KEY !== undefined) {
+      (process.env as any).OPENAI_KEY = original.OPENAI_KEY;
+    }
+  };
+}
+
+/**
  * Lazily create an AIProjectClient using runtime env.
  * This avoids throwing at module import during CI builds.
  */
@@ -43,39 +71,36 @@ function createProjectClient(): AIProjectClient {
 
 /**
  * Get the OpenAI client bound to your Foundry Project.
- * - SDK 1.0.x: getAzureOpenAIClient()
- * - SDK 2.x preview: getOpenAIClient()
- * Some versions accept an options object with { apiVersion }, others don't.
- * We attempt options first, then gracefully fall back.
+ * - Uses Managed Identity via AI Projects.
+ * - Avoids the "apiKey and azureADTokenProvider are mutually exclusive" error
+ *   by temporarily masking any API key env vars during client creation.
  */
 export async function getOpenAIClient() {
+  // Ensure version visible to the factories
+  resolveApiVersion();
+
+  // Build the Projects client first
   const projectClient = createProjectClient();
   const anyClient = projectClient as any;
-  const apiVersion = resolveApiVersion();
 
-  // Prefer Azure client factory if present
-  if (typeof anyClient.getAzureOpenAIClient === "function") {
-    // Try with options → fall back to zero-arg if the signature doesn't accept them
-    try {
-      return await anyClient.getAzureOpenAIClient({ apiVersion });
-    } catch {
+  // Temporarily disable key envs while instantiating OpenAI client (MI-only),
+  // then restore them so other parts of the app (e.g., /api/chat) remain unaffected.
+  const restore = temporarilyDisableOpenAIKeyEnv();
+  try {
+    if (typeof anyClient.getAzureOpenAIClient === "function") {
+      // Some SDKs accept options; others ignore. We pass none to avoid conflicts.
       return await anyClient.getAzureOpenAIClient();
     }
-  }
-
-  // Otherwise use the generic OpenAI client factory
-  if (typeof anyClient.getOpenAIClient === "function") {
-    try {
-      return await anyClient.getOpenAIClient({ apiVersion });
-    } catch {
+    if (typeof anyClient.getOpenAIClient === "function") {
       return await anyClient.getOpenAIClient();
     }
+    throw new Error(
+      "Neither getAzureOpenAIClient() nor getOpenAIClient() exists on AIProjectClient. " +
+        "Check the @azure/ai-projects package version."
+    );
+  } finally {
+    restore();
   }
-
-  throw new Error(
-    "Neither getAzureOpenAIClient() nor getOpenAIClient() exists on AIProjectClient. " +
-      "Check the @azure/ai-projects package version."
-  );
 }
 
 // ------- Conversation helpers (unchanged) -------
@@ -144,4 +169,3 @@ export async function streamAgentResponse(
     // ignore other event types; extend later for tools if needed
   }
 }
-``
