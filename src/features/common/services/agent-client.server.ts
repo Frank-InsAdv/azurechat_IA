@@ -27,7 +27,6 @@ function temporarilyMaskOpenAIKeyEnv(): () => void {
     AZURE_OPENAI_API_KEY: env.AZURE_OPENAI_API_KEY,
     OPENAI_KEY: (env as any).OPENAI_KEY as string | undefined,
   };
-  // Mask by assigning empty strings (compile-safe across env typings)
   env.OPENAI_API_KEY = "";
   env.AZURE_OPENAI_API_KEY = "";
   (env as any).OPENAI_KEY = "";
@@ -76,50 +75,15 @@ export async function getOpenAIClient() {
   }
 }
 
-/**
- * Resolve the Agent reference (prefer ID, then try name via agents.get, else name fallback).
- * Best: set AZURE_AGENT_ID to the **full ARM Agent Resource ID** from the Foundry portal.
- */
-async function resolveAgentRef(): Promise<{ type: "agent_reference"; id?: string; name?: string }> {
+type AgentReference = { type: "agent_reference"; id?: string; name?: string };
+
+function getConfiguredAgentRef(): AgentReference {
   const envId = (process.env.AZURE_AGENT_ID || "").trim();
   const envName = (process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini").trim();
-
-  // If caller configured an ID, use it (accept both versioned IDs e.g. "agent-gpt-5-mini:2"
-  // and full ARM resource IDs e.g. "/subscriptions/.../agents/agent-gpt-5-mini")
   if (envId.length > 0) {
     try { console.log("[agent-chat] using agent by id:", envId); } catch {}
     return { type: "agent_reference", id: envId };
   }
-
-  // Otherwise, attempt a dynamic lookup by name if the runtime supports agents.get(name)
-  try { console.log("[agent-chat] resolving agent by name via agents.get:", envName); } catch {}
-  try {
-    const projectClient = createProjectClient();
-    const anyProject = projectClient as any;
-
-    if (anyProject.agents && typeof anyProject.agents.get === "function") {
-      const retrieved = await anyProject.agents.get(envName);
-      const retrievedId = String(retrieved?.id ?? "").trim();
-      const latestId = String(retrieved?.versions?.latest?.id ?? "").trim();
-      const chosenId = latestId || retrievedId; // prefer explicit version if surfaced
-
-      if (chosenId.length > 0) {
-        try { console.log("[agent-chat] resolved agent id:", chosenId); } catch {}
-        return { type: "agent_reference", id: chosenId };
-      }
-      // If no id surfaced, fall back to name
-      return { type: "agent_reference", name: envName };
-    }
-  } catch (e: any) {
-    try {
-      console.warn(
-        "[agent-chat] agents.get(name) failed or not supported; falling back to name. Error:",
-        e?.message || e
-      );
-    } catch {}
-  }
-
-  // Final fallback: name reference
   try { console.log("[agent-chat] using agent by name:", envName); } catch {}
   return { type: "agent_reference", name: envName };
 }
@@ -131,7 +95,7 @@ export async function streamAgentResponse(
   onDelta: (text: string) => void,
   onConversationId?: (id: string) => void
 ) {
-  const agentRef = await resolveAgentRef();
+  const agentRef = getConfiguredAgentRef();
 
   // Log the ref we’re about to use (visible in App Service Log stream)
   try { console.log("[agent-chat] agentRef:", agentRef); } catch {}
@@ -139,36 +103,81 @@ export async function streamAgentResponse(
   const requestArgs: any = {};
   if (params.conversationId) requestArgs.conversation = params.conversationId;
 
-  const stream = await openAIClient.responses.stream(requestArgs, {
-    body: { agent: agentRef, input: params.userText },
-  });
+  /**
+   * Some tenants expect:
+   *   1) raw string id: "/subscriptions/.../agents/agent-gpt-5-mini/versions/2" OR "agent-gpt-5-mini:2"
+   *   2) object reference: { type: "agent_reference", id: "<full-id>" }
+   * Try both in order when we have an ID. If only name is present, use the object form.
+   */
+  const agentForms: any[] =
+    agentRef.id && agentRef.id.length > 0
+      ? [
+          agentRef.id,                                          // raw string id first
+          { type: "agent_reference", id: agentRef.id },         // object reference form
+        ]
+      : [agentRef];                                             // name fallback only
 
   let emittedConversationId = false;
+  let lastErrorMessage = "";
 
-  for await (const event of stream) {
-    const responseObj: any = (event as any).response;
-    const convIdCandidate =
-      responseObj?.conversation ??
-      responseObj?.conversation_id ??
-      responseObj?.id;
+  for (const agentPayload of agentForms) {
+    try {
+      try { console.log("[agent-chat] trying agent payload form:", agentPayload); } catch {}
+      const stream = await openAIClient.responses.stream(requestArgs, {
+        body: { agent: agentPayload, input: params.userText },
+      });
 
-    if (!emittedConversationId && typeof convIdCandidate === "string") {
-      onConversationId?.(convIdCandidate);
-      emittedConversationId = true;
+      for await (const event of stream) {
+        const responseObj: any = (event as any).response;
+        const convIdCandidate =
+          responseObj?.conversation ??
+          responseObj?.conversation_id ??
+          responseObj?.id;
+
+        if (!emittedConversationId && typeof convIdCandidate === "string") {
+          onConversationId?.(convIdCandidate);
+          emittedConversationId = true;
+        }
+
+        if (event.type === "response.output_text.delta") {
+          onDelta(event.delta);
+        } else if (event.type === "response.error") {
+          const msg = event.error?.message ?? "Agent response error";
+          lastErrorMessage = msg;
+          try { console.error("[agent-chat] response.error:", event.error); } catch {}
+
+          // If this looks like "resource not found", try the next payload form (if available)
+          if (/resource not found/i.test(msg)) {
+            try { console.warn("[agent-chat] 404 for payload form; will try next, if any."); } catch {}
+            break; // break inner stream loop to try next form
+          }
+          // Other error types: throw immediately
+          const hint = "";
+          throw new Error(hint ? `${msg}. ${hint}` : msg);
+        }
+        // Ignore other event types; extend later for tools if needed.
+      }
+
+      // If we reached here without throwing, and we emitted any delta, we’re done.
+      if (emittedConversationId) return;
+      // If no delta emitted yet but no error was thrown, continue to next form.
+    } catch (err: any) {
+      // Errors thrown while creating/iterating stream that aren't "resource not found"
+      const msg = err?.message || String(err);
+      lastErrorMessage = msg;
+      if (/resource not found/i.test(msg)) {
+        try { console.warn("[agent-chat] 404 while starting stream; trying next form if any."); } catch {}
+        continue; // try next agent form
+      }
+      throw err;
     }
-
-    if (event.type === "response.output_text.delta") {
-      onDelta(event.delta);
-    } else if (event.type === "response.error") {
-      const msg = event.error?.message ?? "Agent response error";
-      // Log raw error from Foundry (structure varies by tenant/version)
-      try { console.error("[agent-chat] response.error:", event.error); } catch {}
-      const hint =
-        /resource not found/i.test(msg)
-          ? `Agent not found for ref ${JSON.stringify(agentRef)}. Ensure the Web App's Managed Identity has 'Azure AI User' on the Project and use a resolvable Agent ID (prefer full ARM resource ID).`
-          : "";
-      throw new Error(hint ? `${msg}. ${hint}` : msg);
-    }
-    // Ignore other event types; extend later for tools if needed.
   }
+
+  // If all forms were tried and none produced output, throw a consolidated 404 help
+  const hint =
+    `Agent not found for ref ${JSON.stringify(agentRef)}. ` +
+    `Confirm the Web App's Managed Identity has 'Azure AI User' on the **Project** scope, ` +
+    `and consider removing '/versions/2' to target the latest: ` +
+    `…/projects/new-iagpt-chat/agents/agent-gpt-5-mini`;
+  throw new Error(lastErrorMessage ? `${lastErrorMessage}. ${hint}` : hint);
 }
