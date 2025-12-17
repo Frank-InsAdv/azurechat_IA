@@ -1,3 +1,4 @@
+
 "use server";
 import "server-only";
 
@@ -104,18 +105,18 @@ export async function streamAgentResponse(
   if (params.conversationId) requestArgs.conversation = params.conversationId;
 
   /**
-   * Some tenants expect:
-   *   1) raw string id: "/subscriptions/.../agents/agent-gpt-5-mini/versions/2" OR "agent-gpt-5-mini:2"
-   *   2) object reference: { type: "agent_reference", id: "<full-id>" }
-   * Try both in order when we have an ID. If only name is present, use the object form.
+   * Payload strategy:
+   *  - If we have an id (e.g., "agent-gpt-5-mini:2"), try raw string first.
+   *  - Then try object form with id.
+   *  - If only name is present, use object { type, name }.
    */
-  const agentForms: any[] =
-    agentRef.id && agentRef.id.length > 0
-      ? [
-          agentRef.id,                                          // raw string id first
-          { type: "agent_reference", id: agentRef.id },         // object reference form
-        ]
-      : [agentRef];                                             // name fallback only
+  const hasId = !!agentRef.id && agentRef.id.length > 0;
+  const agentForms: any[] = hasId
+    ? [
+        agentRef.id,                                // raw string id (preferred)
+        { type: "agent_reference", id: agentRef.id } // object reference with id
+      ]
+    : [{ type: "agent_reference", name: agentRef.name }];
 
   let emittedConversationId = false;
   let lastErrorMessage = "";
@@ -146,38 +147,30 @@ export async function streamAgentResponse(
           lastErrorMessage = msg;
           try { console.error("[agent-chat] response.error:", event.error); } catch {}
 
-          // If this looks like "resource not found", try the next payload form (if available)
           if (/resource not found/i.test(msg)) {
             try { console.warn("[agent-chat] 404 for payload form; will try next, if any."); } catch {}
-            break; // break inner stream loop to try next form
+            break; // try next form
           }
-          // Other error types: throw immediately
-          const hint = "";
-          throw new Error(hint ? `${msg}. ${hint}` : msg);
+          throw new Error(msg);
         }
-        // Ignore other event types; extend later for tools if needed.
       }
 
-      // If we reached here without throwing, and we emitted any delta, we’re done.
       if (emittedConversationId) return;
-      // If no delta emitted yet but no error was thrown, continue to next form.
     } catch (err: any) {
-      // Errors thrown while creating/iterating stream that aren't "resource not found"
       const msg = err?.message || String(err);
       lastErrorMessage = msg;
       if (/resource not found/i.test(msg)) {
         try { console.warn("[agent-chat] 404 while starting stream; trying next form if any."); } catch {}
-        continue; // try next agent form
+        continue; // next form
       }
       throw err;
     }
   }
 
-  // If all forms were tried and none produced output, throw a consolidated 404 help
   const hint =
     `Agent not found for ref ${JSON.stringify(agentRef)}. ` +
-    `Confirm the Web App's Managed Identity has 'Azure AI User' on the **Project** scope, ` +
-    `and consider removing '/versions/2' to target the latest: ` +
-    `…/projects/new-iagpt-chat/agents/agent-gpt-5-mini`;
+    `Ensure the Web App's Managed Identity has **Azure AI User** on the **Project** scope: ` +
+    `${process.env.AZURE_EXISTING_AIPROJECT_RESOURCE_ID || "<project resource id>"}.`;
   throw new Error(lastErrorMessage ? `${lastErrorMessage}. ${hint}` : hint);
 }
+``
