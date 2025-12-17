@@ -24,6 +24,7 @@ function temporarilyMaskOpenAIKeyEnv(): () => void {
     AZURE_OPENAI_API_KEY: env.AZURE_OPENAI_API_KEY,
     OPENAI_KEY: (env as any).OPENAI_KEY as string | undefined,
   };
+  // Mask by assigning empty strings (compile-safe across env typings)
   env.OPENAI_API_KEY = "";
   env.AZURE_OPENAI_API_KEY = "";
   (env as any).OPENAI_KEY = "";
@@ -39,6 +40,7 @@ function createProjectClient(): AIProjectClient {
   const endpoint =
     process.env.AZURE_AIPROJECT_ENDPOINT ||
     process.env.AZURE_AI_PROJECT_ENDPOINT_STRING;
+
   if (!endpoint || endpoint.trim().length === 0) {
     throw new Error(
       "Missing AZURE_AIPROJECT_ENDPOINT (or AZURE_AI_PROJECT_ENDPOINT_STRING). " +
@@ -71,18 +73,22 @@ export async function getOpenAIClient() {
   }
 }
 
-/** Resolve the agent reference (prefer ID, then get(name), else name) */
+/**
+ * Resolve the Agent reference (prefer ID, then try name via agents.get, else name fallback).
+ * Best: set AZURE_AGENT_ID to the **full ARM Agent Resource ID** from the Foundry portal.
+ */
 async function resolveAgentRef(): Promise<{ type: "agent_reference"; id?: string; name?: string }> {
   const envId = (process.env.AZURE_AGENT_ID || "").trim();
   const envName = (process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini").trim();
 
-  // Prefer explicit ID set in App Settings
+  // If caller configured an ID, use it (accept both versioned IDs e.g. "agent-gpt-5-mini:2"
+  // and full ARM resource IDs e.g. "/subscriptions/.../agents/agent-gpt-5-mini")
   if (envId.length > 0) {
     try { console.log("[agent-chat] using agent by id:", envId); } catch {}
     return { type: "agent_reference", id: envId };
   }
 
-  // Try agents.get(name) dynamically even if typings don’t expose it
+  // Otherwise, attempt a dynamic lookup by name if the runtime supports agents.get(name)
   try { console.log("[agent-chat] resolving agent by name via agents.get:", envName); } catch {}
   try {
     const projectClient = createProjectClient();
@@ -92,7 +98,7 @@ async function resolveAgentRef(): Promise<{ type: "agent_reference"; id?: string
       const retrieved = await anyProject.agents.get(envName);
       const retrievedId = String(retrieved?.id ?? "").trim();
       const latestId = String(retrieved?.versions?.latest?.id ?? "").trim();
-      const chosenId = latestId || retrievedId;
+      const chosenId = latestId || retrievedId; // prefer explicit version if surfaced
 
       if (chosenId.length > 0) {
         try { console.log("[agent-chat] resolved agent id:", chosenId); } catch {}
@@ -111,6 +117,7 @@ async function resolveAgentRef(): Promise<{ type: "agent_reference"; id?: string
   }
 
   // Final fallback: name reference
+  try { console.log("[agent-chat] using agent by name:", envName); } catch {}
   return { type: "agent_reference", name: envName };
 }
 
@@ -122,6 +129,9 @@ export async function streamAgentResponse(
   onConversationId?: (id: string) => void
 ) {
   const agentRef = await resolveAgentRef();
+
+  // Log the ref we’re about to use (visible in App Service Log stream)
+  try { console.log("[agent-chat] agentRef:", agentRef); } catch {}
 
   const requestArgs: any = {};
   if (params.conversationId) requestArgs.conversation = params.conversationId;
@@ -148,11 +158,13 @@ export async function streamAgentResponse(
       onDelta(event.delta);
     } else if (event.type === "response.error") {
       const msg = event.error?.message ?? "Agent response error";
+      // Log raw error from Foundry (structure varies by tenant/version)
+      try { console.error("[agent-chat] response.error:", event.error); } catch {}
       const hint =
         /resource not found/i.test(msg)
-          ? `Agent not found. Check AZURE_AGENT_ID (${process.env.AZURE_AGENT_ID || "unset"}) or AZURE_AGENT_NAME (${process.env.AZURE_AGENT_NAME || "unset"}).`
+          ? `Agent not found for ref ${JSON.stringify(agentRef)}. Ensure the Web App's Managed Identity has 'Azure AI User' on the Project and use a resolvable Agent ID (prefer full ARM resource ID).`
           : "";
-      throw new Error(hint ? `${msg}. ${hint}` : msg);
+      throw new Error(hint ? `${msg}. ${hint}`      throw new Error(hint ? `${msg}. ${hint}` : msg);
     }
+    // Ignore other event types; extend later for tools if needed.
   }
-}
