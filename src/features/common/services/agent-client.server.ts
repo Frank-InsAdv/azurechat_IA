@@ -1,4 +1,3 @@
-
 "use server";
 import "server-only";
 
@@ -97,6 +96,56 @@ export async function getOpenAIClient() {
 }
 
 /**
+ * Resolve the Agent reference to use:
+ * - If AZURE_AGENT_ID is set, use it directly.
+ * - Else, if AZURE_AGENT_NAME is set, try to resolve name -> id via projectClient.agents.get(name).
+ * - Else, throw a helpful error.
+ */
+async function resolveAgentRef(): Promise<{ type: "agent_reference"; id?: string; name?: string }> {
+  const projectClient = createProjectClient();
+
+  const envName = (process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini").trim();
+  const envId = (process.env.AZURE_AGENT_ID || "").trim();
+
+  // If an explicit ID is provided, prefer it.
+  if (envId.length > 0) {
+    try {
+      console.log("[agent-chat] using agent by id:", envId);
+    } catch {}
+    return { type: "agent_reference", id: envId };
+  }
+
+  // Otherwise, attempt to resolve by name to get a stable id (avoids 404/visibility issues).
+  if (envName.length > 0) {
+    try {
+      console.log("[agent-chat] resolving agent by name:", envName);
+    } catch {}
+    try {
+      const retrieved = await projectClient.agents.get(envName);
+      // retrieved.id is the stable resource id; use it (preferred).
+      if (retrieved?.id && String(retrieved.id).length > 0) {
+        try {
+          console.log("[agent-chat] resolved agent id:", retrieved.id);
+        } catch {}
+        return { type: "agent_reference", id: String(retrieved.id) };
+      }
+      // Fall back to name if id isn't surfaced
+      return { type: "agent_reference", name: envName };
+    } catch (e: any) {
+      // If resolve-by-name fails (e.g., permissions), still try name but include a diagnostic
+      try {
+        console.warn("[agent-chat] agents.get(name) failed; falling back to name. Error:", e?.message || e);
+      } catch {}
+      return { type: "agent_reference", name: envName };
+    }
+  }
+
+  throw new Error(
+    "Agent reference not configured. Set AZURE_AGENT_ID or AZURE_AGENT_NAME in App Settings."
+  );
+}
+
+/**
  * Stream the Agent response (SSE-style) using the Responses API.
  * - If `conversationId` is provided, the API continues that thread.
  * - Otherwise, the API will start a new conversation and the stream will
@@ -111,16 +160,9 @@ export async function streamAgentResponse(
   onDelta: (text: string) => void,
   onConversationId?: (id: string) => void
 ) {
-  const agentName = process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini";
-  const agentId = process.env.AZURE_AGENT_ID; // optional pin, e.g. "agent-gpt-5-mini:2"
+  const agentRef = await resolveAgentRef();
 
-  const agentRef =
-    agentId && agentId.length > 0
-      ? { id: agentId, type: "agent_reference" }
-      : { name: agentName, type: "agent_reference" };
-
-  // Build request using Responses API.
-  // Include the user text inline (no conversations.* mutations).
+  // Build request using Responses API with inline user text.
   const requestArgs: any = {};
   if (params.conversationId) {
     requestArgs.conversation = params.conversationId;
@@ -133,7 +175,6 @@ export async function streamAgentResponse(
   let emittedConversationId = false;
 
   for await (const event of stream) {
-    // Try to detect conversation id from any event carrying `response`
     const responseObj: any = (event as any).response;
     const convIdCandidate =
       responseObj?.conversation ??
@@ -148,8 +189,14 @@ export async function streamAgentResponse(
     if (event.type === "response.output_text.delta") {
       onDelta(event.delta);
     } else if (event.type === "response.error") {
-      throw new Error(event.error?.message ?? "Agent response error");
+      const msg = event.error?.message ?? "Agent response error";
+      // Add hint if Foundry returns 404 for the agent reference.
+      const hint =
+        /resource not found/i.test(msg)
+          ? `Agent not found. Check AZURE_AGENT_ID (${process.env.AZURE_AGENT_ID || "unset"}) or AZURE_AGENT_NAME (${process.env.AZURE_AGENT_NAME || "unset"}).`
+          : "";
+      throw new Error(hint ? `${msg}. ${hint}` : msg);
     }
     // Ignore other event types; extend later for tools if needed.
-   }
+  }
 }
