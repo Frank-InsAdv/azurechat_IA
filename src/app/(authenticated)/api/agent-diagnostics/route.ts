@@ -1,3 +1,4 @@
+
 import "server-only";
 import { DefaultAzureCredential } from "@azure/identity";
 import { AIProjectClient } from "@azure/ai-projects";
@@ -64,51 +65,34 @@ export async function GET() {
     }
 
     const anyProject = projectClient as any;
-    let hasAgentsClient = false;
-    let hasAgentsGet = false;
-
-    try {
-      hasAgentsClient = Boolean(anyProject.agents);
-      hasAgentsGet = hasAgentsClient && typeof anyProject.agents.get === "function";
-    } catch {}
+    const hasAgentsClient = Boolean(anyProject.agents);
+    const hasAgentsGet = hasAgentsClient && typeof anyProject.agents.get === "function";
 
     const configuredName = (process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini").trim();
     const configuredId = (process.env.AZURE_AGENT_ID || "").trim();
 
-    // Build candidate payloads to try in order
+    // Build candidate payloads (order: short id, object+id, name)
     const formsToTry: any[] = [];
-
-    // If short id present (e.g., "agent-gpt-5-mini:2"), try raw string and object id forms
     if (configuredId.length > 0) {
-      formsToTry.push(configuredId); // raw string id preferred by many tenants
-      formsToTry.push({ type: "agent_reference", id: configuredId }); // object + id (some tenants)
-      // If looks like "name:version", also try name form explicitly
+      formsToTry.push(configuredId); // raw short id "agent-gpt-5-mini:2"
+      formsToTry.push({ type: "agent_reference", id: configuredId }); // object + id
       const m = configuredId.match(/^([^:]+):(\d+)$/);
-      if (m) {
-        formsToTry.push({ type: "agent_reference", name: m[1] });
-      }
+      if (m) formsToTry.push({ type: "agent_reference", name: m[1] }); // name derived from short id
     }
-
-    // Always include name form last, so we test it even when id is configured
     if (configuredName.length > 0) {
-      formsToTry.push({ type: "agent_reference", name: configuredName });
+      formsToTry.push({ type: "agent_reference", name: configuredName }); // explicit name
     }
 
-    // Deduplicate forms by JSON string
-    const uniq = (arr: any[]) => {
-      const seen = new Set<string>();
-      return arr.filter((it) => {
-        const key = typeof it === "string" ? it : JSON.stringify(it);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-    };
+    // Deduplicate forms
+    const seen = new Set<string>();
+    const candidatePayloads = formsToTry.filter((p) => {
+      const k = typeof p === "string" ? p : JSON.stringify(p);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
 
-    const candidatePayloads = uniq(formsToTry);
-    const attempts: any[] = [];
-
-    // Obtain the OpenAI client from the Project (works with MI when keys are masked)
+    // Get OpenAI client via Project
     let openAIClient: any;
     try {
       if (typeof (projectClient as any).getOpenAIClient === "function") {
@@ -128,39 +112,46 @@ export async function GET() {
       );
     }
 
+    // Create a conversation first (align with Foundry sample)
+    let conversationId: string | null = null;
     try {
-      // Try each agent payload with a simple create() call (no SSE) to surface exact server errors
+      const conv = await openAIClient.conversations.create({
+        items: [{ type: "message", role: "user", content: "diagnostics: please respond" }],
+      });
+      conversationId = String(conv?.id ?? "");
+    } catch (e: any) {
+      // Even if conversation creation fails, we still report and stop
+      restore();
+      return new Response(
+        JSON.stringify({ error: `Failed to create conversation: ${e?.message ?? String(e)}` }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    const attempts: any[] = [];
+    try {
       for (const agentPayload of candidatePayloads) {
         try {
+          // Follow Foundry sample: pass conversation; body contains agent only
           const resp = await openAIClient.responses.create(
-            {},
-            { body: { agent: agentPayload, input: "diagnostics ping" } }
+            { conversation: conversationId },
+            { body: { agent: agentPayload } }
           );
-
-          const conv =
-            (resp as any)?.conversation ??
-            (resp as any)?.conversation_id ??
-            (resp as any)?.id ??
-            null;
 
           attempts.push({
             agentPayload,
             ok: true,
-            conversation: conv,
+            conversation: conversationId,
             output_text: (resp as any)?.output_text ?? null,
           });
-
-          // If any form succeeded, stop trying further
-          break;
+          break; // on first success, stop
         } catch (e: any) {
           attempts.push({
             agentPayload,
             ok: false,
-            error: {
-              message: e?.message ?? String(e),
-            },
+            error: { message: e?.message ?? String(e) },
           });
-          // continue to next payload form
+          // try next payload
         }
       }
     } finally {
@@ -177,6 +168,7 @@ export async function GET() {
         hasAgentsClient,
         hasAgentsGet,
       },
+      conversationId,
       attempts,
     };
 
