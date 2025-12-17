@@ -1,4 +1,3 @@
-
 import "server-only";
 import { DefaultAzureCredential } from "@azure/identity";
 import { AIProjectClient } from "@azure/ai-projects";
@@ -71,19 +70,18 @@ export async function GET() {
     const configuredName = (process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini").trim();
     const configuredId = (process.env.AZURE_AGENT_ID || "").trim();
 
-    // Build candidate payloads (order: short id, object+id, name)
+    // Candidate agent payloads to try
     const formsToTry: any[] = [];
     if (configuredId.length > 0) {
-      formsToTry.push(configuredId); // raw short id "agent-gpt-5-mini:2"
-      formsToTry.push({ type: "agent_reference", id: configuredId }); // object + id
+      formsToTry.push(configuredId); // raw short id: "agent-gpt-5-mini:2"
+      formsToTry.push({ type: "agent_reference", id: configuredId });
       const m = configuredId.match(/^([^:]+):(\d+)$/);
-      if (m) formsToTry.push({ type: "agent_reference", name: m[1] }); // name derived from short id
+      if (m) formsToTry.push({ type: "agent_reference", name: m[1] });
     }
     if (configuredName.length > 0) {
-      formsToTry.push({ type: "agent_reference", name: configuredName }); // explicit name
+      formsToTry.push({ type: "agent_reference", name: configuredName });
     }
-
-    // Deduplicate forms
+    // Deduplicate
     const seen = new Set<string>();
     const candidatePayloads = formsToTry.filter((p) => {
       const k = typeof p === "string" ? p : JSON.stringify(p);
@@ -112,46 +110,109 @@ export async function GET() {
       );
     }
 
-    // Create a conversation first (align with Foundry sample)
-    let conversationId: string | null = null;
-    try {
-      const conv = await openAIClient.conversations.create({
-        items: [{ type: "message", role: "user", content: "diagnostics: please respond" }],
-      });
-      conversationId = String(conv?.id ?? "");
-    } catch (e: any) {
-      // Even if conversation creation fails, we still report and stop
-      restore();
-      return new Response(
-        JSON.stringify({ error: `Failed to create conversation: ${e?.message ?? String(e)}` }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
     const attempts: any[] = [];
-    try {
-      for (const agentPayload of candidatePayloads) {
-        try {
-          // Follow Foundry sample: pass conversation; body contains agent only
-          const resp = await openAIClient.responses.create(
-            { conversation: conversationId },
-            { body: { agent: agentPayload } }
-          );
+    let conversationId: string | null = null;
 
-          attempts.push({
-            agentPayload,
-            ok: true,
-            conversation: conversationId,
-            output_text: (resp as any)?.output_text ?? null,
-          });
-          break; // on first success, stop
-        } catch (e: any) {
-          attempts.push({
-            agentPayload,
-            ok: false,
-            error: { message: e?.message ?? String(e) },
-          });
-          // try next payload
+    try {
+      // ===== Attempt Pattern A: Create conversation first (Foundry sample flow) =====
+      try {
+        const conv = await openAIClient.conversations.create({
+          items: [{ type: "message", role: "user", content: "diagnostics: please respond" }],
+        });
+        conversationId = String(conv?.id ?? "");
+      } catch (e: any) {
+        attempts.push({
+          step: "conversations.create",
+          ok: false,
+          error: { message: e?.message ?? String(e) },
+        });
+        // We will continue with Pattern B (direct responses without conversation)
+      }
+
+      // If conversation created, try responses.create for each agent payload
+      if (conversationId) {
+        for (const agentPayload of candidatePayloads) {
+          try {
+            const resp = await openAIClient.responses.create(
+              { conversation: conversationId },
+              { body: { agent: agentPayload } }
+            );
+            attempts.push({
+              step: "responses.create (with conversation)",
+              agentPayload,
+              ok: true,
+              conversation: conversationId,
+              output_text: (resp as any)?.output_text ?? null,
+            });
+            // Stop on first success
+            break;
+          } catch (e: any) {
+            attempts.push({
+              step: "responses.create (with conversation)",
+              agentPayload,
+              ok: false,
+              error: { message: e?.message ?? String(e) },
+            });
+          }
+        }
+      }
+
+      // ===== Attempt Pattern B: Direct responses.create with input (no conversation) =====
+      if (!attempts.some((a: any) => a.ok)) {
+        for (const agentPayload of candidatePayloads) {
+          try {
+            const resp = await openAIClient.responses.create(
+              {},
+              { body: { agent: agentPayload, input: "diagnostics: please respond" } }
+            );
+            attempts.push({
+              step: "responses.create (no conversation) with input",
+              agentPayload,
+              ok: true,
+              conversation: (resp as any)?.conversation ?? (resp as any)?.conversation_id ?? null,
+              output_text: (resp as any)?.output_text ?? null,
+            });
+            break; // stop on first success
+          } catch (e: any) {
+            attempts.push({
+              step: "responses.create (no conversation) with input",
+              agentPayload,
+              ok: false,
+              error: { message: e?.message ?? String(e) },
+            });
+          }
+        }
+      }
+
+      // ===== Attempt Pattern C: Direct responses.stream (SSE) with input (no conversation) =====
+      if (!attempts.some((a: any) => a.ok)) {
+        for (const agentPayload of candidatePayloads) {
+          try {
+            const stream = await openAIClient.responses.stream(
+              {},
+              { body: { agent: agentPayload, input: "diagnostics: please respond" } }
+            );
+            let gotText = "";
+            for await (const event of stream) {
+              if ((event as any).type === "response.output_text.delta") {
+                gotText += (event as any).delta || "";
+              }
+            }
+            attempts.push({
+              step: "responses.stream (no conversation) with input",
+              agentPayload,
+              ok: gotText.length > 0,
+              output_text: gotText || null,
+            });
+            if (gotText.length > 0) break;
+          } catch (e: any) {
+            attempts.push({
+              step: "responses.stream (no conversation) with input",
+              agentPayload,
+              ok: false,
+              error: { message: e?.message ?? String(e) },
+            });
+          }
         }
       }
     } finally {
