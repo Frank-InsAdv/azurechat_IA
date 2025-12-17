@@ -22,51 +22,55 @@ export async function GET() {
       endpoint,
       new DefaultAzureCredential()
     );
-
-    const agents: Array<{
-      id: string;
-      name: string;
-      latest?: { id: string; name: string };
-    }> = [];
-
     const anyProject = projectClient as any;
-    if (anyProject.agents && typeof anyProject.agents.list === "function") {
-      for await (const agent of anyProject.agents.list()) {
-        agents.push({
-          id: String(agent?.id ?? ""),
-          name: String(agent?.name ?? ""),
-          latest: {
-            id: String(agent?.versions?.latest?.id ?? ""),
-            name: String(agent?.versions?.latest?.name ?? ""),
-          },
-        });
+
+    const configuredName = (process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini").trim();
+    const configuredId = (process.env.AZURE_AGENT_ID || "").trim();
+
+    // Try agents.get(name) dynamically even if typings don’t include it
+    let resolved: any = null;
+    let getSupported = false;
+    try {
+      if (anyProject.agents && typeof anyProject.agents.get === "function") {
+        getSupported = true;
+        resolved = await anyProject.agents.get(configuredName);
       }
-    } else {
-      return new Response(
-        JSON.stringify({
-          error:
-            "agents.list() is not available on this @azure/ai-projects version.",
-          endpoint,
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+    } catch (e: any) {
+      // Swallow and report below
+      resolved = { error: e?.message ?? String(e) };
     }
 
-    return new Response(
-      JSON.stringify({
-        endpoint,
-        configured: {
-          AZURE_AGENT_ID: process.env.AZURE_AGENT_ID || "",
-          AZURE_AGENT_NAME: process.env.AZURE_AGENT_NAME || "",
-        },
-        agents,
-      }),
-      { headers: { "Content-Type": "application/json" } }
-    );
+    const payload = {
+      endpoint,
+      configured: {
+        AZURE_AGENT_ID: configuredId,
+        AZURE_AGENT_NAME: configuredName,
+      },
+      support: {
+        hasAgentsClient: Boolean(anyProject.agents),
+        hasAgentsGet: getSupported,
+      },
+      resolvedViaGet: resolved
+        ? {
+            id: String(resolved?.id ?? ""),
+            name: String(resolved?.name ?? ""),
+            latest: {
+              id: String(resolved?.versions?.latest?.id ?? ""),
+              name: String(resolved?.versions?.latest?.name ?? ""),
+            },
+            raw: resolved,
+          }
+        : null,
+    };
+
+    return new Response(JSON.stringify(payload), {
+      headers: { "Content-Type": "application/json" },
+    });
   } catch (e: any) {
-    return new Response(
-      JSON.stringify({ error: e?.message ?? String(e) }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ error: e?.message ?? String(e) }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 }
+``
