@@ -98,51 +98,51 @@ export async function getOpenAIClient() {
 /**
  * Resolve the Agent reference to use:
  * - If AZURE_AGENT_ID is set, use it directly.
- * - Else, if AZURE_AGENT_NAME is set, try to resolve name -> id via projectClient.agents.get(name).
+ * - Else, if AZURE_AGENT_NAME is set, try to resolve name -> id by listing agents.
  * - Else, throw a helpful error.
  */
 async function resolveAgentRef(): Promise<{ type: "agent_reference"; id?: string; name?: string }> {
-  const projectClient = createProjectClient();
-
-  const envName = (process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini").trim();
   const envId = (process.env.AZURE_AGENT_ID || "").trim();
+  const envName = (process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini").trim();
 
-  // If an explicit ID is provided, prefer it.
   if (envId.length > 0) {
-    try {
-      console.log("[agent-chat] using agent by id:", envId);
-    } catch {}
+    try { console.log("[agent-chat] using agent by id:", envId); } catch {}
     return { type: "agent_reference", id: envId };
   }
 
-  // Otherwise, attempt to resolve by name to get a stable id (avoids 404/visibility issues).
-  if (envName.length > 0) {
-    try {
-      console.log("[agent-chat] resolving agent by name:", envName);
-    } catch {}
-    try {
-      const retrieved = await projectClient.agents.get(envName);
-      // retrieved.id is the stable resource id; use it (preferred).
-      if (retrieved?.id && String(retrieved.id).length > 0) {
-        try {
-          console.log("[agent-chat] resolved agent id:", retrieved.id);
-        } catch {}
-        return { type: "agent_reference", id: String(retrieved.id) };
+  // Try to resolve via listing (handles SDKs without .agents.get(name))
+  try { console.log("[agent-chat] resolving agent by name:", envName); } catch {}
+
+  try {
+    const projectClient = createProjectClient();
+    const anyProject = projectClient as any;
+
+    if (anyProject.agents && typeof anyProject.agents.list === "function") {
+      // Iterate the list and match by name (either root name or latest version name)
+      // NOTE: types are 'any' to avoid compile errors across SDK variants.
+      for await (const agent of anyProject.agents.list()) {
+        const aName = (agent?.name ?? "").trim();
+        const latestName = (agent?.versions?.latest?.name ?? "").trim();
+        const aId = String(agent?.id ?? "").trim();
+        const latestId = String(agent?.versions?.latest?.id ?? "").trim();
+
+        if (aName === envName || latestName === envName) {
+          const chosenId = latestId || aId;
+          if (chosenId.length > 0) {
+            try { console.log("[agent-chat] resolved agent id:", chosenId); } catch {}
+            return { type: "agent_reference", id: chosenId };
+          }
+          // If no id surfaced, fall back to name reference.
+          break;
+        }
       }
-      // Fall back to name if id isn't surfaced
-      return { type: "agent_reference", name: envName };
-    } catch (e: any) {
-      // If resolve-by-name fails (e.g., permissions), still try name but include a diagnostic
-      try {
-        console.warn("[agent-chat] agents.get(name) failed; falling back to name. Error:", e?.message || e);
-      } catch {}
-      return { type: "agent_reference", name: envName };
     }
+  } catch (e: any) {
+    try { console.warn("[agent-chat] agents.list() failed; falling back to name. Error:", e?.message || e); } catch {}
   }
 
-  throw new Error(
-    "Agent reference not configured. Set AZURE_AGENT_ID or AZURE_AGENT_NAME in App Settings."
-  );
+  // Fallback: use name reference
+  return { type: "agent_reference", name: envName };
 }
 
 /**
@@ -200,3 +200,4 @@ export async function streamAgentResponse(
     // Ignore other event types; extend later for tools if needed.
   }
 }
+``
