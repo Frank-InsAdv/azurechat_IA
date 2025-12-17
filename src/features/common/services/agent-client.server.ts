@@ -16,7 +16,10 @@ function resolveApiVersion(): string {
   return v;
 }
 
-/** Temporarily mask any OpenAI API key env vars so Projects factory uses MI only; restore afterwards */
+/**
+ * Temporarily mask any OpenAI API key env vars so the Projects factory uses
+ * Managed Identity only; restore afterwards.
+ */
 function temporarilyMaskOpenAIKeyEnv(): () => void {
   const env = process.env as NodeJS.ProcessEnv;
   const original = {
@@ -163,8 +166,3 @@ export async function streamAgentResponse(
       const hint =
         /resource not found/i.test(msg)
           ? `Agent not found for ref ${JSON.stringify(agentRef)}. Ensure the Web App's Managed Identity has 'Azure AI User' on the Project and use a resolvable Agent ID (prefer full ARM resource ID).`
-          : "";
-      throw new Error(hint ? `${msg}. ${hint}`      throw new Error(hint ? `${msg}. ${hint}` : msg);
-    }
-    // Ignore other event types; extend later for tools if needed.
-  }
