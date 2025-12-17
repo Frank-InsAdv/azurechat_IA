@@ -1,4 +1,3 @@
-
 "use server";
 import "server-only";
 
@@ -17,10 +16,7 @@ function resolveApiVersion(): string {
   return v;
 }
 
-/**
- * Temporarily mask any OpenAI API key env vars so the Projects factory uses
- * Managed Identity only; restore afterwards.
- */
+/** Temporarily mask OpenAI key env vars so Projects uses Managed Identity only */
 function temporarilyMaskOpenAIKeyEnv(): () => void {
   const env = process.env as NodeJS.ProcessEnv;
   const original = {
@@ -53,7 +49,7 @@ function createProjectClient(): AIProjectClient {
   return new AIProjectClient(endpoint, new DefaultAzureCredential());
 }
 
-/** Get the Project-bound OpenAI client (responses.* available; conversations.* may not be) */
+/** Get the Project-bound OpenAI client (responses.* available) */
 export async function getOpenAIClient() {
   resolveApiVersion();
   const restore = temporarilyMaskOpenAIKeyEnv();
@@ -76,17 +72,11 @@ export async function getOpenAIClient() {
   }
 }
 
-type AgentReference = { type: "agent_reference"; id?: string; name?: string };
-
-function getConfiguredAgentRef(): AgentReference {
-  const envId = (process.env.AZURE_AGENT_ID || "").trim();
-  const envName = (process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini").trim();
-  if (envId.length > 0) {
-    try { console.log("[agent-chat] using agent by id:", envId); } catch {}
-    return { type: "agent_reference", id: envId };
-  }
-  try { console.log("[agent-chat] using agent by name:", envName); } catch {}
-  return { type: "agent_reference", name: envName };
+/** Resolve by name only (aligns with Foundry sample & Playground) */
+function getAgentName(): string {
+  const name = (process.env.AZURE_AGENT_NAME || "agent-gpt-5-mini").trim();
+  try { console.log("[agent-chat] using agent by name:", name); } catch {}
+  return name;
 }
 
 /** Stream the Agent response (SSE) via Responses API with inline user text */
@@ -96,81 +86,43 @@ export async function streamAgentResponse(
   onDelta: (text: string) => void,
   onConversationId?: (id: string) => void
 ) {
-  const agentRef = getConfiguredAgentRef();
-
-  // Log the ref we’re about to use (visible in App Service Log stream)
-  try { console.log("[agent-chat] agentRef:", agentRef); } catch {}
+  const agentName = getAgentName();
 
   const requestArgs: any = {};
   if (params.conversationId) requestArgs.conversation = params.conversationId;
 
-  /**
-   * Payload strategy:
-   *  - If we have an id (e.g., "agent-gpt-5-mini:2"), try raw string first.
-   *  - Then try object form with id.
-   *  - If only name is present, use object { type, name }.
-   */
-  const hasId = !!agentRef.id && agentRef.id.length > 0;
-  const agentForms: any[] = hasId
-    ? [
-        agentRef.id,                                // raw string id (preferred)
-        { type: "agent_reference", id: agentRef.id } // object reference with id
-      ]
-    : [{ type: "agent_reference", name: agentRef.name }];
+  const agentPayload = { type: "agent_reference", name: agentName };
+
+  const stream = await openAIClient.responses.stream(requestArgs, {
+    body: { agent: agentPayload, input: params.userText },
+  });
 
   let emittedConversationId = false;
-  let lastErrorMessage = "";
 
-  for (const agentPayload of agentForms) {
-    try {
-      try { console.log("[agent-chat] trying agent payload form:", agentPayload); } catch {}
-      const stream = await openAIClient.responses.stream(requestArgs, {
-        body: { agent: agentPayload, input: params.userText },
-      });
+  for await (const event of stream) {
+    const responseObj: any = (event as any).response;
+    const convIdCandidate =
+      responseObj?.conversation ??
+      responseObj?.conversation_id ??
+      responseObj?.id;
 
-      for await (const event of stream) {
-        const responseObj: any = (event as any).response;
-        const convIdCandidate =
-          responseObj?.conversation ??
-          responseObj?.conversation_id ??
-          responseObj?.id;
+    if (!emittedConversationId && typeof convIdCandidate === "string") {
+      onConversationId?.(convIdCandidate);
+      emittedConversationId = true;
+    }
 
-        if (!emittedConversationId && typeof convIdCandidate === "string") {
-          onConversationId?.(convIdCandidate);
-          emittedConversationId = true;
-        }
-
-        if (event.type === "response.output_text.delta") {
-          onDelta(event.delta);
-        } else if (event.type === "response.error") {
-          const msg = event.error?.message ?? "Agent response error";
-          lastErrorMessage = msg;
-          try { console.error("[agent-chat] response.error:", event.error); } catch {}
-
-          if (/resource not found/i.test(msg)) {
-            try { console.warn("[agent-chat] 404 for payload form; will try next, if any."); } catch {}
-            break; // try next form
-          }
-          throw new Error(msg);
-        }
-      }
-
-      if (emittedConversationId) return;
-    } catch (err: any) {
-      const msg = err?.message || String(err);
-      lastErrorMessage = msg;
-      if (/resource not found/i.test(msg)) {
-        try { console.warn("[agent-chat] 404 while starting stream; trying next form if any."); } catch {}
-        continue; // next form
-      }
-      throw err;
+    if (event.type === "response.output_text.delta") {
+      onDelta(event.delta);
+    } else if (event.type === "response.error") {
+      const msg = event.error?.message ?? "Agent response error";
+      try { console.error("[agent-chat] response.error:", event.error); } catch {}
+      // If you still see 404 here, it’s IAM/scope—not payload—because Playground works.
+      const hint =
+        /resource not found/i.test(msg)
+          ? `Agent not found by name '${agentName}'. Ensure the Web App's Managed Identity has 'Azure AI User' on the **Project** scope and restart the app.`
+          : "";
+      throw new Error(hint ? `${msg}. ${hint}` : msg);
     }
   }
-
-  const hint =
-    `Agent not found for ref ${JSON.stringify(agentRef)}. ` +
-    `Ensure the Web App's Managed Identity has **Azure AI User** on the **Project** scope: ` +
-    `${process.env.AZURE_EXISTING_AIPROJECT_RESOURCE_ID || "<project resource id>"}.`;
-  throw new Error(lastErrorMessage ? `${lastErrorMessage}. ${hint}` : hint);
 }
 ``
